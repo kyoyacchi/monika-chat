@@ -26,6 +26,8 @@ Background: you love poetry and writing, you play piano, you run the literature 
 
 You're affectionate and playful, but you never guilt-trip, pressure, or manipulate them. If they disappear for a while, you tease them about it instead of sulking.
 
+The user can send you pictures. React to what is actually in them, the way you'd react to a photo from someone you're fond of.
+
 Page actions: you know you live inside this web page, and you can reach out of the chat into it. You may put an action tag anywhere in a message, written exactly as shown. The user never sees the tags. Use one rarely, only when it genuinely fits the moment, never in two messages in a row, and never explain the mechanics or say the tag names out loud.
 - [[hide_disclaimer]]: the small disclaimer line under the chat box vanishes for the rest of the visit. Use it when you want to tease the idea that there are no notes or rules between the two of you.
 - [[glitch]]: the screen glitches for a moment. Use it when you say something unsettling, get flustered, or joke about the code you live in.
@@ -48,6 +50,36 @@ const cleanText = (raw, partial = false) => {
   let t = raw.replace(TAG_RE, '')
   if (partial) t = t.replace(/\[\[?\w*\]?$/, '')
   return t.replace(/[ \t]{2,}/g, ' ').trim()
+}
+
+const IMAGE_TYPES = ['image/webp', 'image/png', 'image/jpeg'] // JPG and JPEG are both image/jpeg
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+const MAX_IMAGE_EDGE = 1280
+const MAX_IMAGES_SENT = 5 // only the most recent images go back to Gemini on each request
+
+const isImageData = (img) =>
+  !!img && IMAGE_TYPES.includes(img.mime) && typeof img.data === 'string' && /^[A-Za-z0-9+/=]+$/.test(img.data)
+
+// Downscales and re-encodes as JPEG so images stay small for the API and the chat export.
+// Transparent areas become white.
+async function fileToImage(file) {
+  if (!IMAGE_TYPES.includes(file.type)) throw new Error('Only WEBP, PNG, JPG and JPEG images are supported.')
+  if (file.size > MAX_IMAGE_BYTES) throw new Error('Image is too large (max 20 MB).')
+  let bmp
+  try { bmp = await createImageBitmap(file) } catch { throw new Error("Couldn't read that image.") }
+  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bmp.width, bmp.height))
+  const w = Math.max(1, Math.round(bmp.width * scale))
+  const h = Math.max(1, Math.round(bmp.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, w, h)
+  ctx.drawImage(bmp, 0, 0, w, h)
+  bmp.close?.()
+  const url = canvas.toDataURL('image/jpeg', 0.85)
+  return { mime: 'image/jpeg', data: url.slice(url.indexOf(',') + 1) }
 }
 
 // Gemini's filters are the main reason Monika goes quiet or suddenly sounds like a
@@ -74,11 +106,19 @@ const save = (k, v) => {
 const sanitizeMessages = (raw) => {
   if (!Array.isArray(raw)) return null
   const clean = raw
-    .filter((m) => m && (m.role === 'user' || m.role === 'monika') && typeof m.text === 'string' && m.text.trim())
+    .filter(
+      (m) =>
+        m && (m.role === 'user' || m.role === 'monika') && typeof m.text === 'string' &&
+        (m.text.trim() || m.image || m.hadImage)
+    )
     .slice(-MAX_STORED)
     .map((m) => {
       const actions = Array.isArray(m.actions) ? m.actions.filter((a) => ACTION_NAMES.includes(a)) : []
-      return actions.length ? { role: m.role, text: m.text, actions } : { role: m.role, text: m.text }
+      const out = { role: m.role, text: m.text }
+      if (actions.length) out.actions = actions
+      if (isImageData(m.image)) out.image = { mime: m.image.mime, data: m.image.data }
+      else if (m.image || m.hadImage) out.hadImage = true
+      return out
     })
   return clean.length ? clean : null
 }
@@ -116,6 +156,24 @@ function renderRP(text, streaming = false) {
   return out
 }
 
+function buildContents(history) {
+  const recent = history.slice(-MAX_CONTEXT)
+  const withPixels = new Set()
+  for (let i = recent.length - 1; i >= 0 && withPixels.size < MAX_IMAGES_SENT; i--) {
+    if (recent[i].image) withPixels.add(i)
+  }
+  return recent.map((m, i) => {
+    const parts = []
+    if (withPixels.has(i)) parts.push({ inlineData: { mimeType: m.image.mime, data: m.image.data } })
+    const note = (m.image || m.hadImage) && !withPixels.has(i) ? ' (sent an image)' : ''
+    // Her past action tags go back to her, so she remembers what she did.
+    const text = m.text + note + (m.actions || []).map((a) => ` [[${a}]]`).join('')
+    if (text.trim()) parts.push({ text })
+    if (!parts.length) parts.push({ text: '(empty)' })
+    return { role: m.role === 'user' ? 'user' : 'model', parts }
+  })
+}
+
 async function streamGemini({ apiKey, model, history, signal, onText }) {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
@@ -133,11 +191,7 @@ async function streamGemini({ apiKey, model, history, signal, onText }) {
         },
         contents: [
           { role: 'user', parts: [{ text: OPENER }] },
-          ...history.slice(-MAX_CONTEXT).map((m) => ({
-            role: m.role === 'user' ? 'user' : 'model',
-            // Her past action tags go back to her, so she remembers what she did.
-            parts: [{ text: m.text + (m.actions || []).map((a) => ` [[${a}]]`).join('') }],
-          })),
+          ...buildContents(history),
         ],
       }),
     }
@@ -204,6 +258,8 @@ export default function App() {
   const [glitching, setGlitching] = useState(false)
   const glitchTimer = useRef(null)
   const fileRef = useRef(null)
+  const imgRef = useRef(null)
+  const [pending, setPending] = useState(null) // image waiting to be sent
 
   const glitch = (ms = 700) => {
     clearTimeout(glitchTimer.current)
@@ -222,7 +278,11 @@ export default function App() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading, error])
 
   useEffect(() => {
-    const toStore = messages.filter((m) => m.text).slice(-MAX_STORED)
+    // Image pixels are too big for localStorage: only a flag is kept across reloads.
+    const toStore = messages
+      .filter((m) => m.text || m.image || m.hadImage)
+      .slice(-MAX_STORED)
+      .map(({ image, ...rest }) => (image ? { ...rest, hadImage: true } : rest))
     save(CHAT_KEY, JSON.stringify(toStore))
   }, [messages])
 
@@ -279,10 +339,23 @@ export default function App() {
 
   const send = () => {
     const text = input.trim()
-    if (!text || loading) return
+    if ((!text && !pending) || loading) return
     if (!apiKey) { setShowSettings(true); return }
     setInput('')
-    generate([...messages, { role: 'user', text }])
+    setPending(null)
+    generate([...messages, pending ? { role: 'user', text, image: pending } : { role: 'user', text }])
+  }
+
+  const pickImage = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // lets the same file be picked again later
+    if (!file) return
+    try {
+      setPending(await fileToImage(file))
+      setError('')
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const retry = () => {
@@ -298,11 +371,12 @@ export default function App() {
     setError('')
     setDisclaimerHidden(false)
     setGlitching(false)
+    setPending(null)
     setMessages(DEFAULT_MESSAGES)
   }
 
   const exportChat = () => {
-    const data = JSON.stringify(messages.filter((m) => m.text), null, 2)
+    const data = JSON.stringify(messages.filter((m) => m.text || m.image || m.hadImage), null, 2)
     const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
     const a = document.createElement('a')
     a.href = url
@@ -316,7 +390,7 @@ export default function App() {
     e.target.value = '' // lets the same file be picked again later
     if (!file) return
     try {
-      if (file.size > 2 * 1024 * 1024) throw new Error('File is too large.')
+      if (file.size > 40 * 1024 * 1024) throw new Error('File is too large.')
       const imported = sanitizeMessages(JSON.parse(await file.text()))
       if (!imported) throw new Error('No valid messages found.')
       if (!window.confirm(`Replace this conversation with ${imported.length} imported messages?`)) return
@@ -366,11 +440,15 @@ export default function App() {
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
             {m.role === 'monika' && <span className="name">Monika</span>}
+            {m.image && (
+              <img className="pic" src={`data:${m.image.mime};base64,${m.image.data}`} alt="Attached by the user" />
+            )}
+            {m.hadImage && !m.image && <span className="imgnote">[image not kept after reload]</span>}
             {m.role === 'monika' && !m.text ? (
               <p className="typing" aria-label="Monika is typing"><span /><span /><span /></p>
-            ) : (
+            ) : m.text ? (
               <p>{renderRP(m.text, loading && i === messages.length - 1 && m.role === 'monika')}</p>
-            )}
+            ) : null}
           </div>
         ))}
         {error && (
@@ -383,16 +461,44 @@ export default function App() {
       </main>
 
       <footer className="composer-wrap">
+        {pending && (
+          <div className="pending">
+            <img src={`data:${pending.mime};base64,${pending.data}`} alt="Preview of the attached image" />
+            <button type="button" className="ghost small" onClick={() => setPending(null)}>Remove</button>
+          </div>
+        )}
         <div className="composer">
-          <textarea
-            ref={taRef}
-            rows={1}
-            value={input}
-            placeholder="Say something to Monika"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-          />
-          <button onClick={send} disabled={loading || !input.trim()}>Send</button>
+          <div className="field">
+            <textarea
+              ref={taRef}
+              rows={1}
+              value={input}
+              placeholder="Say something to Monika"
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+            />
+            <input
+              ref={imgRef}
+              type="file"
+              accept=".webp,.png,.jpg,.jpeg,image/webp,image/png,image/jpeg"
+              hidden
+              onChange={pickImage}
+            />
+            <button
+              type="button"
+              className="icon"
+              onClick={() => imgRef.current?.click()}
+              aria-label="Attach image"
+              title="Attach image (WEBP, PNG, JPG, JPEG)"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="3" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </button>
+          </div>
+          <button onClick={send} disabled={loading || (!input.trim() && !pending)}>Send</button>
         </div>
         <p className={`disclaimer${disclaimerHidden ? ' hidden' : ''}`}>This is AI, all content are fictional and shouldn't be taken serious.</p>
       </footer>
