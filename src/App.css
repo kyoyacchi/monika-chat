@@ -53,6 +53,19 @@ body {
 }
 .composer-wrap { padding: 10px 0 8px; }
 .composer { display: flex; gap: 8px; align-items: flex-end; }
+.field { position: relative; flex: 1; min-width: 0; display: flex; }
+.field textarea { padding-right: 44px; }
+button.icon {
+  position: absolute; right: 6px; bottom: 6px; width: 32px; min-height: 32px; padding: 0;
+  display: grid; place-items: center; background: transparent; color: var(--green); border-radius: 8px;
+}
+button.icon:hover { background: var(--green-soft); }
+.pending { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.pending img { height: 64px; max-width: 120px; object-fit: cover; border-radius: 10px; border: 2px solid var(--pink); }
+.pic { display: block; max-width: 100%; max-height: 280px; border-radius: 14px; border: 2px solid var(--pink); margin-bottom: 4px; }
+.msg.user .pic { margin-left: auto; }
+.imgnote { display: block; font-size: .8rem; font-style: italic; color: var(--muted); margin-bottom: 4px; }
+.msg.user .imgnote { text-align: right; }
 .disclaimer { margin: 8px 0 0; text-align: center; font-size: .75rem; color: var(--muted); transition: opacity .4s; }
 .disclaimer.hidden { opacity: 0; }
 .badge {
