@@ -26,6 +26,7 @@ body {
 .log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 8px 4px 16px; }
 .msg { max-width: 82%; line-height: 1.5; }
 .msg p { margin: 0; padding: 10px 14px; border-radius: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg p em { font-style: italic; opacity: .85; }
 .msg.monika { align-self: flex-start; }
 .msg.monika p { background: var(--card); border: 2px solid var(--green); border-top-left-radius: 4px; }
 .msg.user { align-self: flex-end; }
