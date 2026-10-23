@@ -91,6 +91,31 @@ const loadMessages = () => {
   }
 }
 
+// RP formatting: *action* renders as italic, anywhere in a message. The raw text is stored untouched.
+// While streaming, an action that hasn't been closed yet is already shown in italic.
+const ITALIC_RE = /\*([^\s*](?:[^*]*[^\s*])?)\*/g
+function renderRP(text, streaming = false) {
+  const out = []
+  let last = 0
+  let key = 0
+  for (const m of text.matchAll(ITALIC_RE)) {
+    if (m.index > last) out.push(text.slice(last, m.index))
+    out.push(<em key={key++}>{m[1]}</em>)
+    last = m.index + m[0].length
+  }
+  let rest = text.slice(last)
+  if (streaming) {
+    const open = rest.match(/\*([^\s*][^*]*)$/)
+    if (open) {
+      if (open.index > 0) out.push(rest.slice(0, open.index))
+      out.push(<em key={key++}>{open[1]}</em>)
+      rest = ''
+    }
+  }
+  if (rest) out.push(rest)
+  return out
+}
+
 async function streamGemini({ apiKey, model, history, signal, onText }) {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
@@ -344,7 +369,7 @@ export default function App() {
             {m.role === 'monika' && !m.text ? (
               <p className="typing" aria-label="Monika is typing"><span /><span /><span /></p>
             ) : (
-              <p>{m.text}</p>
+              <p>{renderRP(m.text, loading && i === messages.length - 1 && m.role === 'monika')}</p>
             )}
           </div>
         ))}
