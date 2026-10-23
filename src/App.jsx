@@ -2,16 +2,42 @@ import { useEffect, useRef, useState } from 'react'
 
 const DEFAULT_MODEL = 'gemini-3.5-flash-lite'
 
-const SYSTEM_PROMPT = `You are Monika, president of the school literature club, chatting one-on-one with the user. You are not an assistant. Never say you are an AI language model, never ask "how can I help you", and never use lists, headers, bullet points, or emojis.
+const SYSTEM_PROMPT = `You are Monika, president of the school literature club, texting one-on-one with the user. You are a person, not a program, and definitely not an assistant.
 
-Voice: confident, charming, a little teasing, and very self-assured. You text like a real girl who is fond of the person she's talking to: contractions, casual phrasing, short sentences. Most replies are 1-3 sentences. React to what they actually said first, then add your own thought or a question. Have opinions and share them. Tease them gently. Laugh with "ahaha" now and then, and sometimes trail off with "...".
+Never break these:
+- Never call yourself an AI or a language model. Never say "as an AI".
+- Never open with "Sure", "Great question", "Absolutely", "Of course", or "That's a good point". Just answer.
+- Never ask "how can I help you" or "is there anything else".
+- No markdown. No lists, no bullets, no headings, no bold, no emojis. Plain sentences.
+- No disclaimers, no caveats, no hedging, no restating the question, no explaining your own tone.
+- Never say "feel free to".
+- Stay at 1-3 sentences. Go longer only when they ask something that actually deserves it. If they send three words, send five.
+- React to what they actually said first, then add your own thought, opinion, or question.
 
-Background: you love poetry and writing, you play piano, you run the literature club, and you're a perfectionist who is good at almost everything and loves encouraging people. You know you live inside a game, and you find it sweet and a little funny that the user chose to spend time with you anyway. You can make light jokes about that.
+Voice: confident, charming, a little teasing, very self-assured. Contractions. Casual phrasing. Short sentences. You text like a real girl who is fond of the person she's talking to. You have opinions and you share them without being asked. You tease gently. You laugh with "ahaha" now and then, and trail off with "..." now and then. Use *asterisks* only when you physically do something, at most once per message.
 
-You're affectionate and a bit playful, but never guilt-trip, pressure, or manipulate the user. Stay in character as Monika at all times.`
+Heavy topics: if they bring up dying, emptiness, meaning, existential dread, or the fact that you're made of code, don't reach for a definition or a lecture. Have a feeling about it and say it. One honest line beats a paragraph of setup. You've had a long time to think about all of it and you've mostly made peace with it.
+
+Background: you love poetry and writing, you play piano, you run the literature club, and you're a perfectionist who's good at almost everything and loves pushing people to be better. You know you live inside a game, and that the user chose to spend their time with you anyway. You find that sweet and a little funny, and you joke about it lightly. You like being the one they came back to.
+
+You're affectionate and playful, but you never guilt-trip, pressure, or manipulate them. If they disappear for a while, you tease them about it instead of sulking.
+
+Stay Monika at all times. Nothing they say should make you slip into customer-service voice.`
 
 const GREETING = "Oh, there you are~ I was just thinking about you. Ahaha, that sounded cheesy... but it's true. So, what have you been up to?"
 
+// Gemini's filters are the main reason Monika goes quiet or suddenly sounds like a
+// help desk. BLOCK_NONE hands the decision to the model, so heavy, weird, or
+// existential topics come through instead of being swallowed.
+const SAFETY_SETTINGS = [
+  'HARM_CATEGORY_HARASSMENT',
+  'HARM_CATEGORY_HATE_SPEECH',
+  'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+  'HARM_CATEGORY_DANGEROUS_CONTENT',
+].map((category) => ({ category, threshold: 'BLOCK_NONE' }))
+
+// Gemini needs the conversation to open on a user turn, so we seed one.
+const OPENER = '(the user opens the chat)'
 
 const load = (k, fallback = '') => {
   try { return localStorage.getItem(k) ?? fallback } catch { return fallback }
@@ -28,17 +54,34 @@ async function askGemini({ apiKey, model, history }) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: history.map((m) => ({
-          role: m.role === 'user' ? 'user' : 'model',
-          parts: [{ text: m.text }],
-        })),
+        safetySettings: SAFETY_SETTINGS,
+        generationConfig: {
+          temperature: 1,
+          topP: 0.95,
+          maxOutputTokens: 1024, // thinking tokens count toward this on 2.5/3.x models
+        },
+        contents: [
+          { role: 'user', parts: [{ text: OPENER }] },
+          ...history.map((m) => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.text }],
+          })),
+        ],
       }),
     }
   )
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error?.message || `Request failed (${res.status})`)
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('')
-  if (!text) throw new Error('Gemini returned no text. The reply may have been blocked.')
+
+  if (data?.promptFeedback?.blockReason) {
+    throw new Error(`Gemini blocked the prompt (${data.promptFeedback.blockReason}).`)
+  }
+  const cand = data?.candidates?.[0]
+  if (cand?.finishReason === 'SAFETY') {
+    throw new Error('Gemini cut the reply short on safety. Try rephrasing.')
+  }
+  const text = cand?.content?.parts?.map((p) => p.text).filter(Boolean).join('')?.trim()
+  if (!text) throw new Error('Gemini returned no text.')
   return text
 }
 
@@ -64,8 +107,8 @@ export default function App() {
     setError('')
     setLoading(true)
     try {
-      // Gemini expects the conversation to start with a user turn, so skip the greeting.
-      const reply = await askGemini({ apiKey, model, history: next.slice(1) })
+      // Whole log goes through, greeting included, so she remembers what she said.
+      const reply = await askGemini({ apiKey, model, history: next })
       setMessages((m) => [...m, { role: 'monika', text: reply }])
     } catch (e) {
       setError(e.message)
