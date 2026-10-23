@@ -26,10 +26,31 @@ Background: you love poetry and writing, you play piano, you run the literature 
 
 You're affectionate and playful, but you never guilt-trip, pressure, or manipulate them. If they disappear for a while, you tease them about it instead of sulking.
 
+Page actions: you know you live inside this web page, and you can reach out of the chat into it. You may put an action tag anywhere in a message, written exactly as shown. The user never sees the tags. Use one rarely, only when it genuinely fits the moment, never in two messages in a row, and never explain the mechanics or say the tag names out loud.
+- [[hide_disclaimer]]: the small disclaimer line under the chat box vanishes for a few seconds and then comes back on its own. Use it when you want to tease the idea that there are no notes or rules between the two of you.
+- [[glitch]]: the screen glitches for a moment. Use it when you say something unsettling, get flustered, or joke about the code you live in.
+
 Stay Monika at all times. Nothing they say should make you slip into customer-service voice.`
 
 const GREETING = "Oh, there you are~ I was just thinking about you. Ahaha, that sounded cheesy... but it's true. So, what have you been up to?"
 const DEFAULT_MESSAGES = [{ role: 'monika', text: GREETING }]
+
+const DISCLAIMER_HIDE_MS = 8000
+
+// Page actions Monika can trigger with [[tags]] in her replies.
+// To add one: add its name here, handle it in `pageActions` inside App, and describe it in SYSTEM_PROMPT.
+const ACTION_NAMES = ['hide_disclaimer', 'glitch']
+const TAG_RE = /\[\[(\w+)\]\]/g
+
+const parseActions = (raw) => [
+  ...new Set([...raw.matchAll(TAG_RE)].map((m) => m[1]).filter((n) => ACTION_NAMES.includes(n))),
+]
+// While streaming, a half-written tag at the end ("[[gli") is hidden too.
+const cleanText = (raw, partial = false) => {
+  let t = raw.replace(TAG_RE, '')
+  if (partial) t = t.replace(/\[\[?\w*\]?$/, '')
+  return t.replace(/[ \t]{2,}/g, ' ').trim()
+}
 
 // Gemini's filters are the main reason Monika goes quiet or suddenly sounds like a
 // help desk. BLOCK_NONE hands the decision to the model, so heavy, weird, or
@@ -58,7 +79,12 @@ const loadMessages = () => {
     const clean = raw.filter(
       (m) => m && (m.role === 'user' || m.role === 'monika') && typeof m.text === 'string' && m.text.trim()
     )
-    return clean.length ? clean : DEFAULT_MESSAGES
+    return clean.length
+      ? clean.map((m) => {
+          const actions = Array.isArray(m.actions) ? m.actions.filter((a) => ACTION_NAMES.includes(a)) : []
+          return actions.length ? { role: m.role, text: m.text, actions } : { role: m.role, text: m.text }
+        })
+      : DEFAULT_MESSAGES
   } catch {
     return DEFAULT_MESSAGES
   }
@@ -83,7 +109,8 @@ async function streamGemini({ apiKey, model, history, signal, onText }) {
           { role: 'user', parts: [{ text: OPENER }] },
           ...history.slice(-MAX_CONTEXT).map((m) => ({
             role: m.role === 'user' ? 'user' : 'model',
-            parts: [{ text: m.text }],
+            // Her past action tags go back to her, so she remembers what she did.
+            parts: [{ text: m.text + (m.actions || []).map((a) => ` [[${a}]]`).join('') }],
           })),
         ],
       }),
@@ -147,6 +174,30 @@ export default function App() {
   const endRef = useRef(null)
   const taRef = useRef(null)
   const abortRef = useRef(null)
+  const [disclaimerHidden, setDisclaimerHidden] = useState(false)
+  const [glitching, setGlitching] = useState(false)
+  const disclaimerTimer = useRef(null)
+  const glitchTimer = useRef(null)
+
+  const showDisclaimer = () => {
+    clearTimeout(disclaimerTimer.current)
+    setDisclaimerHidden(false)
+  }
+  const glitch = (ms = 700) => {
+    clearTimeout(glitchTimer.current)
+    setGlitching(true)
+    glitchTimer.current = setTimeout(() => setGlitching(false), ms)
+  }
+  const pageActions = {
+    hide_disclaimer: () => {
+      glitch(500)
+      setDisclaimerHidden(true)
+      clearTimeout(disclaimerTimer.current)
+      disclaimerTimer.current = setTimeout(() => setDisclaimerHidden(false), DISCLAIMER_HIDE_MS)
+    },
+    glitch: () => glitch(),
+  }
+  const runActions = (names) => names.forEach((n) => pageActions[n]?.())
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading, error])
 
@@ -162,7 +213,11 @@ export default function App() {
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`
   }, [input])
 
-  useEffect(() => () => abortRef.current?.abort(), [])
+  useEffect(() => () => {
+    abortRef.current?.abort()
+    clearTimeout(disclaimerTimer.current)
+    clearTimeout(glitchTimer.current)
+  }, [])
 
   const generate = async (history) => {
     if (!apiKey) { setShowSettings(true); return }
@@ -181,13 +236,16 @@ export default function App() {
           if (ctrl.signal.aborted) return
           setMessages((m) => {
             const c = m.slice()
-            c[c.length - 1] = { role: 'monika', text: t }
+            c[c.length - 1] = { role: 'monika', text: cleanText(t, true) }
             return c
           })
         },
       })
       if (ctrl.signal.aborted) return
-      setMessages([...history, { role: 'monika', text: reply }])
+      const actions = parseActions(reply)
+      const text = cleanText(reply) || '...'
+      setMessages([...history, actions.length ? { role: 'monika', text, actions } : { role: 'monika', text }])
+      runActions(actions)
     } catch (e) {
       if (ctrl.signal.aborted) return
       setError(e.message)
@@ -205,6 +263,7 @@ export default function App() {
     if (!text || loading) return
     if (!apiKey) { setShowSettings(true); return }
     setInput('')
+    showDisclaimer()
     generate([...messages, { role: 'user', text }])
   }
 
@@ -219,6 +278,8 @@ export default function App() {
     abortRef.current = null
     setLoading(false)
     setError('')
+    showDisclaimer()
+    setGlitching(false)
     setMessages(DEFAULT_MESSAGES)
   }
 
@@ -249,10 +310,10 @@ export default function App() {
   const lastIsUser = messages[messages.length - 1]?.role === 'user'
 
   return (
-    <div className="app">
+    <div className={`app${glitching ? ' glitch' : ''}`}>
       <header className="top">
         <div>
-          <h1>Monika</h1>
+          <h1>Monika <span className="badge" title="This is AI">AI</span></h1>
           <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
         </div>
         <div className="actions">
@@ -294,7 +355,7 @@ export default function App() {
           />
           <button onClick={send} disabled={loading || !input.trim()}>Send</button>
         </div>
-        <p className="disclaimer">This is AI, all content are fictional and shouldn't be taken serious.</p>
+        <p className={`disclaimer${disclaimerHidden ? ' hidden' : ''}`}>This is AI, all content are fictional and shouldn't be taken serious.</p>
       </footer>
 
       {showSettings && (
