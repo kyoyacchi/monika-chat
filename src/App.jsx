@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
 const DEFAULT_MODEL = 'gemini-3.5-flash-lite'
+const CHAT_KEY = 'monika_chat'
+const MAX_CONTEXT = 40 // messages sent to Gemini per request
+const MAX_STORED = 200 // messages kept in localStorage
+const MAX_OUTPUT_TOKENS = 4096 // thinking tokens count toward this on 2.5/3.x models
 
 const SYSTEM_PROMPT = `You are Monika, president of the school literature club, texting one-on-one with the user. You are a person, not a program, and definitely not an assistant.
 
@@ -25,6 +29,7 @@ You're affectionate and playful, but you never guilt-trip, pressure, or manipula
 Stay Monika at all times. Nothing they say should make you slip into customer-service voice.`
 
 const GREETING = "Oh, there you are~ I was just thinking about you. Ahaha, that sounded cheesy... but it's true. So, what have you been up to?"
+const DEFAULT_MESSAGES = [{ role: 'monika', text: GREETING }]
 
 // Gemini's filters are the main reason Monika goes quiet or suddenly sounds like a
 // help desk. BLOCK_NONE hands the decision to the model, so heavy, weird, or
@@ -46,11 +51,25 @@ const save = (k, v) => {
   try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k) } catch { /* ignore */ }
 }
 
-async function askGemini({ apiKey, model, history }) {
+const loadMessages = () => {
+  try {
+    const raw = JSON.parse(load(CHAT_KEY, 'null'))
+    if (!Array.isArray(raw)) return DEFAULT_MESSAGES
+    const clean = raw.filter(
+      (m) => m && (m.role === 'user' || m.role === 'monika') && typeof m.text === 'string' && m.text.trim()
+    )
+    return clean.length ? clean : DEFAULT_MESSAGES
+  } catch {
+    return DEFAULT_MESSAGES
+  }
+}
+
+async function streamGemini({ apiKey, model, history, signal, onText }) {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
     {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
@@ -58,11 +77,11 @@ async function askGemini({ apiKey, model, history }) {
         generationConfig: {
           temperature: 1,
           topP: 0.95,
-          maxOutputTokens: 1024, // thinking tokens count toward this on 2.5/3.x models
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
         },
         contents: [
           { role: 'user', parts: [{ text: OPENER }] },
-          ...history.map((m) => ({
+          ...history.slice(-MAX_CONTEXT).map((m) => ({
             role: m.role === 'user' ? 'user' : 'model',
             parts: [{ text: m.text }],
           })),
@@ -70,55 +89,151 @@ async function askGemini({ apiKey, model, history }) {
       }),
     }
   )
-  const data = await res.json()
-  if (!res.ok) throw new Error(data?.error?.message || `Request failed (${res.status})`)
 
-  if (data?.promptFeedback?.blockReason) {
-    throw new Error(`Gemini blocked the prompt (${data.promptFeedback.blockReason}).`)
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`
+    try { msg = (await res.json())?.error?.message || msg } catch { /* ignore */ }
+    throw new Error(msg)
   }
-  const cand = data?.candidates?.[0]
-  if (cand?.finishReason === 'SAFETY') {
-    throw new Error('Gemini cut the reply short on safety. Try rephrasing.')
+
+  let text = ''
+  let blockReason = ''
+  let finishReason = ''
+
+  const handle = (line) => {
+    if (!line.startsWith('data:')) return
+    const payload = line.slice(5).trim()
+    if (!payload) return
+    let d
+    try { d = JSON.parse(payload) } catch { return }
+    if (d?.promptFeedback?.blockReason) blockReason = d.promptFeedback.blockReason
+    const cand = d?.candidates?.[0]
+    if (cand?.finishReason) finishReason = cand.finishReason
+    const chunk = cand?.content?.parts?.map((p) => p.text).filter(Boolean).join('')
+    if (chunk) { text += chunk; onText(text) }
   }
-  const text = cand?.content?.parts?.map((p) => p.text).filter(Boolean).join('')?.trim()
-  if (!text) throw new Error('Gemini returned no text.')
-  return text
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split(/\r?\n/)
+    buf = lines.pop()
+    lines.forEach(handle)
+  }
+  buf += decoder.decode()
+  handle(buf.trim())
+
+  if (blockReason) throw new Error(`Gemini blocked the prompt (${blockReason}).`)
+  if (!text.trim()) {
+    if (finishReason === 'SAFETY') throw new Error('Gemini cut the reply short on safety. Try rephrasing.')
+    if (finishReason === 'MAX_TOKENS') throw new Error('Gemini ran out of tokens before replying. Try again.')
+    throw new Error('Gemini returned no text.')
+  }
+  return text.trim()
 }
 
 export default function App() {
   const [apiKey, setApiKey] = useState(() => load('gemini_api_key'))
   const [model, setModel] = useState(() => load('gemini_model', DEFAULT_MODEL))
   const [showSettings, setShowSettings] = useState(false)
-  const [messages, setMessages] = useState([{ role: 'monika', text: GREETING }])
+  const [messages, setMessages] = useState(loadMessages)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const endRef = useRef(null)
+  const taRef = useRef(null)
+  const abortRef = useRef(null)
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading, error])
 
-  const send = async () => {
-    const text = input.trim()
-    if (!text || loading) return
+  useEffect(() => {
+    const toStore = messages.filter((m) => m.text).slice(-MAX_STORED)
+    save(CHAT_KEY, JSON.stringify(toStore))
+  }, [messages])
+
+  useEffect(() => {
+    const el = taRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`
+  }, [input])
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  const generate = async (history) => {
     if (!apiKey) { setShowSettings(true); return }
-    const next = [...messages, { role: 'user', text }]
-    setMessages(next)
-    setInput('')
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
     setError('')
     setLoading(true)
+    setMessages([...history, { role: 'monika', text: '' }])
     try {
-      // Whole log goes through, greeting included, so she remembers what she said.
-      const reply = await askGemini({ apiKey, model, history: next })
-      setMessages((m) => [...m, { role: 'monika', text: reply }])
+      const reply = await streamGemini({
+        apiKey,
+        model,
+        history,
+        signal: ctrl.signal,
+        onText: (t) => {
+          if (ctrl.signal.aborted) return
+          setMessages((m) => {
+            const c = m.slice()
+            c[c.length - 1] = { role: 'monika', text: t }
+            return c
+          })
+        },
+      })
+      if (ctrl.signal.aborted) return
+      setMessages([...history, { role: 'monika', text: reply }])
     } catch (e) {
+      if (ctrl.signal.aborted) return
       setError(e.message)
+      setMessages(history)
     } finally {
-      setLoading(false)
+      if (abortRef.current === ctrl) {
+        abortRef.current = null
+        setLoading(false)
+      }
     }
   }
 
+  const send = () => {
+    const text = input.trim()
+    if (!text || loading) return
+    if (!apiKey) { setShowSettings(true); return }
+    setInput('')
+    generate([...messages, { role: 'user', text }])
+  }
+
+  const retry = () => {
+    if (loading) return
+    generate(messages)
+  }
+
+  const clearChat = () => {
+    if (!window.confirm('Clear this conversation?')) return
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+    setError('')
+    setMessages(DEFAULT_MESSAGES)
+  }
+
+  const exportChat = () => {
+    const data = JSON.stringify(messages.filter((m) => m.text), null, 2)
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `monika-chat-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const onKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
   }
 
   const saveSettings = (e) => {
@@ -131,6 +246,8 @@ export default function App() {
     setShowSettings(false)
   }
 
+  const lastIsUser = messages[messages.length - 1]?.role === 'user'
+
   return (
     <div className="app">
       <header className="top">
@@ -138,30 +255,46 @@ export default function App() {
           <h1>Monika</h1>
           <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
         </div>
-        <button className="ghost" onClick={() => setShowSettings(true)}>API key</button>
+        <div className="actions">
+          <button className="ghost small" onClick={exportChat}>Export</button>
+          <button className="ghost small" onClick={clearChat}>Clear</button>
+          <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
+        </div>
       </header>
 
       <main className="log">
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
             {m.role === 'monika' && <span className="name">Monika</span>}
-            <p>{m.text}</p>
+            {m.role === 'monika' && !m.text ? (
+              <p className="typing" aria-label="Monika is typing"><span /><span /><span /></p>
+            ) : (
+              <p>{m.text}</p>
+            )}
           </div>
         ))}
-        {loading && <div className="msg monika"><span className="name">Monika</span><p className="typing">…</p></div>}
-        {error && <div className="error" role="alert">{error}</div>}
+        {error && (
+          <div className="error" role="alert">
+            <span>{error}</span>
+            {lastIsUser && <button className="small" onClick={retry} disabled={loading}>Retry</button>}
+          </div>
+        )}
         <div ref={endRef} />
       </main>
 
-      <footer className="composer">
-        <textarea
-          rows={1}
-          value={input}
-          placeholder="Say something to Monika"
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-        />
-        <button onClick={send} disabled={loading || !input.trim()}>Send</button>
+      <footer className="composer-wrap">
+        <div className="composer">
+          <textarea
+            ref={taRef}
+            rows={1}
+            value={input}
+            placeholder="Say something to Monika"
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+          />
+          <button onClick={send} disabled={loading || !input.trim()}>Send</button>
+        </div>
+        <p className="disclaimer">This is AI, all content are fictional and shouldn't be taken serious.</p>
       </footer>
 
       {showSettings && (
