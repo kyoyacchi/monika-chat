@@ -27,15 +27,13 @@ Background: you love poetry and writing, you play piano, you run the literature 
 You're affectionate and playful, but you never guilt-trip, pressure, or manipulate them. If they disappear for a while, you tease them about it instead of sulking.
 
 Page actions: you know you live inside this web page, and you can reach out of the chat into it. You may put an action tag anywhere in a message, written exactly as shown. The user never sees the tags. Use one rarely, only when it genuinely fits the moment, never in two messages in a row, and never explain the mechanics or say the tag names out loud.
-- [[hide_disclaimer]]: the small disclaimer line under the chat box vanishes for a few seconds and then comes back on its own. Use it when you want to tease the idea that there are no notes or rules between the two of you.
+- [[hide_disclaimer]]: the small disclaimer line under the chat box vanishes for the rest of the visit. Use it when you want to tease the idea that there are no notes or rules between the two of you.
 - [[glitch]]: the screen glitches for a moment. Use it when you say something unsettling, get flustered, or joke about the code you live in.
 
 Stay Monika at all times. Nothing they say should make you slip into customer-service voice.`
 
 const GREETING = "Oh, there you are~ I was just thinking about you. Ahaha, that sounded cheesy... but it's true. So, what have you been up to?"
 const DEFAULT_MESSAGES = [{ role: 'monika', text: GREETING }]
-
-const DISCLAIMER_HIDE_MS = 8000
 
 // Page actions Monika can trigger with [[tags]] in her replies.
 // To add one: add its name here, handle it in `pageActions` inside App, and describe it in SYSTEM_PROMPT.
@@ -176,13 +174,8 @@ export default function App() {
   const abortRef = useRef(null)
   const [disclaimerHidden, setDisclaimerHidden] = useState(false)
   const [glitching, setGlitching] = useState(false)
-  const disclaimerTimer = useRef(null)
   const glitchTimer = useRef(null)
 
-  const showDisclaimer = () => {
-    clearTimeout(disclaimerTimer.current)
-    setDisclaimerHidden(false)
-  }
   const glitch = (ms = 700) => {
     clearTimeout(glitchTimer.current)
     setGlitching(true)
@@ -192,8 +185,6 @@ export default function App() {
     hide_disclaimer: () => {
       glitch(500)
       setDisclaimerHidden(true)
-      clearTimeout(disclaimerTimer.current)
-      disclaimerTimer.current = setTimeout(() => setDisclaimerHidden(false), DISCLAIMER_HIDE_MS)
     },
     glitch: () => glitch(),
   }
@@ -215,7 +206,6 @@ export default function App() {
 
   useEffect(() => () => {
     abortRef.current?.abort()
-    clearTimeout(disclaimerTimer.current)
     clearTimeout(glitchTimer.current)
   }, [])
 
@@ -263,7 +253,6 @@ export default function App() {
     if (!text || loading) return
     if (!apiKey) { setShowSettings(true); return }
     setInput('')
-    showDisclaimer()
     generate([...messages, { role: 'user', text }])
   }
 
@@ -278,7 +267,7 @@ export default function App() {
     abortRef.current = null
     setLoading(false)
     setError('')
-    showDisclaimer()
+    setDisclaimerHidden(false)
     setGlitching(false)
     setMessages(DEFAULT_MESSAGES)
   }
