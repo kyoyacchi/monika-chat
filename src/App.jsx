@@ -70,19 +70,22 @@ const save = (k, v) => {
   try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k) } catch { /* ignore */ }
 }
 
+// Returns a clean message array, or null when nothing valid is in `raw`.
+const sanitizeMessages = (raw) => {
+  if (!Array.isArray(raw)) return null
+  const clean = raw
+    .filter((m) => m && (m.role === 'user' || m.role === 'monika') && typeof m.text === 'string' && m.text.trim())
+    .slice(-MAX_STORED)
+    .map((m) => {
+      const actions = Array.isArray(m.actions) ? m.actions.filter((a) => ACTION_NAMES.includes(a)) : []
+      return actions.length ? { role: m.role, text: m.text, actions } : { role: m.role, text: m.text }
+    })
+  return clean.length ? clean : null
+}
+
 const loadMessages = () => {
   try {
-    const raw = JSON.parse(load(CHAT_KEY, 'null'))
-    if (!Array.isArray(raw)) return DEFAULT_MESSAGES
-    const clean = raw.filter(
-      (m) => m && (m.role === 'user' || m.role === 'monika') && typeof m.text === 'string' && m.text.trim()
-    )
-    return clean.length
-      ? clean.map((m) => {
-          const actions = Array.isArray(m.actions) ? m.actions.filter((a) => ACTION_NAMES.includes(a)) : []
-          return actions.length ? { role: m.role, text: m.text, actions } : { role: m.role, text: m.text }
-        })
-      : DEFAULT_MESSAGES
+    return sanitizeMessages(JSON.parse(load(CHAT_KEY, 'null'))) || DEFAULT_MESSAGES
   } catch {
     return DEFAULT_MESSAGES
   }
@@ -175,6 +178,7 @@ export default function App() {
   const [disclaimerHidden, setDisclaimerHidden] = useState(false)
   const [glitching, setGlitching] = useState(false)
   const glitchTimer = useRef(null)
+  const fileRef = useRef(null)
 
   const glitch = (ms = 700) => {
     clearTimeout(glitchTimer.current)
@@ -282,6 +286,25 @@ export default function App() {
     URL.revokeObjectURL(url)
   }
 
+  const importChat = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // lets the same file be picked again later
+    if (!file) return
+    try {
+      if (file.size > 2 * 1024 * 1024) throw new Error('File is too large.')
+      const imported = sanitizeMessages(JSON.parse(await file.text()))
+      if (!imported) throw new Error('No valid messages found.')
+      if (!window.confirm(`Replace this conversation with ${imported.length} imported messages?`)) return
+      abortRef.current?.abort()
+      abortRef.current = null
+      setLoading(false)
+      setError('')
+      setMessages(imported)
+    } catch (err) {
+      setError(`Import failed: ${err.message}`)
+    }
+  }
+
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
   }
@@ -306,6 +329,8 @@ export default function App() {
           <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
         </div>
         <div className="actions">
+          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
+          <button className="ghost small" onClick={() => fileRef.current?.click()}>Import</button>
           <button className="ghost small" onClick={exportChat}>Export</button>
           <button className="ghost small" onClick={clearChat}>Clear</button>
           <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
