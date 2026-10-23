@@ -52,7 +52,24 @@ body {
 }
 .composer-wrap { padding: 10px 0 8px; }
 .composer { display: flex; gap: 8px; align-items: flex-end; }
-.disclaimer { margin: 8px 0 0; text-align: center; font-size: .75rem; color: var(--muted); }
+.disclaimer { margin: 8px 0 0; text-align: center; font-size: .75rem; color: var(--muted); transition: opacity .4s; }
+.disclaimer.hidden { opacity: 0; }
+.badge {
+  display: inline-block; vertical-align: middle; margin-left: 6px; padding: 1px 8px;
+  font-size: .7rem; font-weight: 800; color: var(--green); border: 2px solid var(--green); border-radius: 8px;
+}
+.glitch .top, .glitch .log, .glitch .composer-wrap { animation: glitch .14s linear infinite; }
+@keyframes glitch {
+  0% { transform: translate(0); filter: none; }
+  20% { transform: translate(-3px, 1px); filter: hue-rotate(90deg) saturate(2); }
+  40% { transform: translate(3px, -1px); text-shadow: 2px 0 var(--pink), -2px 0 var(--green); }
+  60% { transform: translate(-2px, -2px); filter: invert(.15); }
+  80% { transform: translate(2px, 1px); filter: hue-rotate(-60deg); }
+  100% { transform: translate(0); filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .glitch .top, .glitch .log, .glitch .composer-wrap { animation: none; }
+}
 textarea, input {
   font: inherit; color: var(--ink); background: var(--card); border: 2px solid var(--green);
   border-radius: 12px; padding: 10px 12px; width: 100%;
