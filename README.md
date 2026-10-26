@@ -18,7 +18,10 @@ A small, fast, bring-your-own-key chat app for roleplaying with Monika from *Dok
 
 ---
 
-![Monika Chat screenshot](./docs/screenshot.png)
+Monika Chat screenshots: (example)
+<img width="1080" height="1727" alt="1000110274" src="https://github.com/user-attachments/assets/11294f17-f23e-4391-b204-552ca0ea3cec" />
+
+<img width="1080" height="1734" alt="1000110277" src="https://github.com/user-attachments/assets/25b6b386-3839-4fa7-bfec-2c77cb412039" />
 
 ## About
 
