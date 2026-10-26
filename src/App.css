@@ -50,6 +50,17 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .typing span { animation: none; opacity: .7; }
 }
+.msg-actions { display: flex; gap: 2px; margin-top: 4px; }
+.msg.user .msg-actions { justify-content: flex-end; }
+button.mini {
+  width: 30px; min-height: 30px; padding: 0; display: grid; place-items: center;
+  background: transparent; color: var(--muted); border-radius: 8px; opacity: .8;
+}
+button.mini:hover:not(:disabled) { background: var(--green-soft); color: var(--green); opacity: 1; }
+.msg.editing { width: 82%; }
+.editbox { display: grid; gap: 8px; width: 100%; }
+.editbox textarea { border-color: var(--pink); }
+button.stop { min-width: 72px; }
 .error {
   align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   background: #ffe0e0; color: #8a1c1c; padding: 10px 14px; border-radius: 10px; font-size: .9rem;
