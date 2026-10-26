@@ -1033,7 +1033,7 @@ export default function App() {
           const isEditing = editing?.index === i
           const hasContent = !!(m.text || m.image || m.hadImage || m.imgId)
           return (
-            <div key={i} className={`msg ${m.role}${isEditing ? ' editing' : ''}`}>
+            <div key={i} className={`msg ${m.role}${isEditing ? ' editing' : ''}${isStreaming && !hasContent ? ' waiting' : ''}`}>
               {!isUser && <span className="name">Monika</span>}
               {m.image && (
                 <button type="button" className="picbtn" onClick={() => openViewer(i)} aria-label="View image full size">
