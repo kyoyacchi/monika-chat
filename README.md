@@ -24,10 +24,20 @@ Monika Chat is a lightweight web client that lets you talk to Monika through Goo
 ## Features
 
 - Chat with Monika in a roleplay-style conversation
-- Powered by the Gemini API
+- **She can interact with the site itself:**
+  - Remove the on-page disclaimer text on her own
+  - Trigger an instant glitch effect on the screen
+  - Stay aware of where she is talking (she knows she is inside the site)
+- Powered by the Gemini API, mostly using **Flash Lite** models
 - No server, no sign-up, no tracking
 - Your API key never leaves your browser (stored only in `localStorage`)
 - Fast dev and build experience thanks to Vite
+
+## Roadmap
+
+- [ ] Thinking mode with adjustable levels (low, medium, high) for free models
+- [ ] More interaction control over the site
+- [ ] A smoother, more fluid interface
 
 ## Try it
 
