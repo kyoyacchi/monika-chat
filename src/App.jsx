@@ -396,7 +396,10 @@ export default function App() {
     const el = taRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 140)}px`
+    const border = el.offsetHeight - el.clientHeight // box-sizing is border-box
+    const h = Math.min(el.scrollHeight + border, 140)
+    el.style.height = `${h}px`
+    el.style.overflowY = el.scrollHeight + border > 140 ? 'auto' : 'hidden'
   }, [input])
 
   useEffect(() => () => {
