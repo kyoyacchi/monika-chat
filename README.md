@@ -132,3 +132,5 @@ This is an unofficial fan project. *Doki Doki Literature Club* and its character
 Made with love by [kyoyacchi](https://github.com/kyoyacchi)
 
 </div>
+
+<img src="https://upload.wikimedia.org/wikipedia/commons/b/b0/Claude_AI_symbol.svg" alt="Claude" width="16" height="16" /> Written with (mostly) the help of Claude
