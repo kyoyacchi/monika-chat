@@ -41,6 +41,8 @@ body {
 }
 
 .app {
+  --top-h: 76px;
+  position: relative;
   max-width: 720px;
   height: 100%;
   margin: 0 auto;
@@ -51,20 +53,37 @@ body {
 
 /* ——— Header (sticky, auto-hides while scrolling) ——— */
 .top {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  z-index: 5;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
   padding: 16px 2px 12px;
-  flex-shrink: 0;
-  transition: transform 0.22s ease, opacity 0.22s ease;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition: transform 0.22s ease, opacity 0.22s ease, visibility 0s linear 0s;
   will-change: transform, opacity;
 }
 
 .app.header-hidden .top {
-  transform: translateY(-110%);
+  transform: translateY(-100%);
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
+  transition: transform 0.22s ease, opacity 0.22s ease, visibility 0s linear 0.22s;
+}
+
+.app.header-hidden .top:focus-within {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform 0.22s ease, opacity 0.22s ease, visibility 0s linear 0s;
 }
 
 .top h1 {
@@ -101,7 +120,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 6px 2px 20px;
+  padding: calc(var(--top-h) + 6px) 2px 20px;
+  scroll-padding-top: var(--top-h);
   min-height: 0;
 }
 
