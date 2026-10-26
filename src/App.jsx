@@ -453,6 +453,9 @@ function IconBtn({ label, onClick, disabled, children }) {
   )
 }
 
+// Text of the contenteditable composer, minus the stray trailing newline browsers add.
+const readComposer = (el) => el.innerText.replace(/\u00a0/g, ' ').replace(/\n$/, '')
+
 export default function App() {
   const [apiKey, setApiKey] = useState(() => load('gemini_api_key'))
   const [model, setModel] = useState(() => load('gemini_model', DEFAULT_MODEL))
@@ -560,15 +563,50 @@ export default function App() {
     }
   }, [])
 
+  // The composer is a plain-text contenteditable (not a textarea) so phone keyboards
+  // (Gboard clipboard, etc.) can paste images into it. Keep its DOM in sync with `input`.
   useEffect(() => {
     const el = taRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    const border = el.offsetHeight - el.clientHeight // box-sizing is border-box
-    const h = Math.min(el.scrollHeight + border, 140)
-    el.style.height = `${h}px`
-    el.style.overflowY = el.scrollHeight + border > 140 ? 'auto' : 'hidden'
+    if (el && readComposer(el) !== input) el.innerText = input
   }, [input])
+
+  // Pasted or dropped images anywhere on the page become the pending attachment.
+  useEffect(() => {
+    const imageFrom = (dt) => {
+      if (!dt) return null
+      const files = [...(dt.files || [])].filter((f) => f.type.startsWith('image/'))
+      if (files.length) return files[0]
+      for (const it of dt.items || []) {
+        if (it.kind === 'file' && it.type.startsWith('image/')) return it.getAsFile()
+      }
+      return null
+    }
+    const onPaste = (e) => {
+      const t = e.target
+      const inOtherField = t instanceof HTMLElement && t !== taRef.current && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))
+      if (inOtherField) return
+      const file = imageFrom(e.clipboardData)
+      if (!file) return
+      e.preventDefault()
+      attachFile(file)
+    }
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files')
+    const onDragOver = (e) => { if (hasFiles(e)) e.preventDefault() }
+    const onDrop = (e) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      const file = imageFrom(e.dataTransfer)
+      if (file) attachFile(file)
+    }
+    window.addEventListener('paste', onPaste)
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('paste', onPaste)
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [])
 
   // Bring saved images back from IndexedDB (after a reload or when opening a chat).
   const hydrateImages = async (msgs, chatId) => {
@@ -782,16 +820,19 @@ export default function App() {
     generate([...messages, msg])
   }
 
-  const pickImage = async (e) => {
-    const file = e.target.files?.[0]
-    e.target.value = '' // lets the same file be picked again later
-    if (!file) return
+  const attachFile = async (file) => {
     try {
       setPending(await fileToImage(file))
       setError('')
     } catch (err) {
       setError(err.message)
     }
+  }
+
+  const pickImage = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // lets the same file be picked again later
+    if (file) attachFile(file)
   }
 
   const retry = () => {
@@ -1140,12 +1181,19 @@ export default function App() {
           >
             <ImageIcon />
           </button>
-          <textarea
+          <div
             ref={taRef}
-            rows={1}
-            value={input}
-            placeholder="Say something to Monika"
-            onChange={(e) => setInput(e.target.value)}
+            className="composer-input"
+            contentEditable="plaintext-only"
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Message"
+            data-placeholder="Say something to Monika"
+            data-empty={!input}
+            enterKeyHint="send"
+            spellCheck
+            onInput={(e) => setInput(readComposer(e.currentTarget))}
             onKeyDown={onKeyDown}
           />
           {loading ? (
