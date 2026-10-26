@@ -34,11 +34,12 @@ Monika Chat is a lightweight web client that lets you talk to Monika through Goo
   - Accepts images and chats about them (image input supported)
 - Uses Gemini **Flash Lite** models by default — fast and cheap on the free tier
 - No server, no sign-up, no tracking
-- Your API key never leaves your browser (stored only in `localStorage`)
+- Regenerate, edit (your messages) and copy actions on every message, plus a Stop button while she is replying
+- Your key is stored locally in this browser (`localStorage`) and sent directly to Google, not to our server. Don't enter a key you wouldn't trust this site to handle.
 
 ### How the site interaction works
 
-Monika's abilities (removing the disclaimer, triggering glitches, reacting to uploads) are exposed to Gemini as tools. When she "decides" to use one, the browser executes it locally — no server round-trip.
+Monika's abilities (removing the disclaimer, triggering glitches) work through small action tags she can put in her replies. The browser strips the tags from the text and runs the matching action locally, with no server round-trip. Images are sent to Gemini as part of the conversation.
 
 ## Roadmap
 
