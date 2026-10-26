@@ -452,9 +452,6 @@ function IconBtn({ label, onClick, disabled, children }) {
   )
 }
 
-const confirmCut = (extra) =>
-  extra <= 0 || window.confirm(`This will also remove ${extra} later message${extra === 1 ? '' : 's'}. Continue?`)
-
 export default function App() {
   const [apiKey, setApiKey] = useState(() => load('gemini_api_key'))
   const [model, setModel] = useState(() => load('gemini_model', DEFAULT_MODEL))
@@ -464,6 +461,7 @@ export default function App() {
   const [chats, setChats] = useState(boot.index)
   const [activeId, setActiveId] = useState(boot.activeId)
   const [showDrawer, setShowDrawer] = useState(false)
+  const [dialog, setDialog] = useState(null) // custom confirm popup: { title, message, confirmLabel }
   const [viewer, setViewer] = useState(null) // { items: [{ src }], i } while the image viewer is open
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -482,6 +480,9 @@ export default function App() {
   const instantRef = useRef(false)
   const modalRef = useRef(null)
   const drawerRef = useRef(null)
+  const dialogRef = useRef(null)
+  const dialogResolve = useRef(null)
+  const dialogFocusRef = useRef(null)
   const drawerFocusRef = useRef(null)
   const viewerRef = useRef(null)
   const viewerFocusRef = useRef(null)
@@ -644,6 +645,37 @@ export default function App() {
     return () => viewerFocusRef.current?.focus?.()
   }, [viewerOpen])
 
+  // Custom replacement for window.confirm: resolves true on confirm, false on cancel/Esc/backdrop.
+  const askConfirm = (opts) =>
+    new Promise((resolve) => {
+      dialogResolve.current?.(false)
+      dialogResolve.current = resolve
+      setDialog(opts)
+    })
+  const answerConfirm = (ok) => {
+    const resolve = dialogResolve.current
+    dialogResolve.current = null
+    setDialog(null)
+    resolve?.(ok)
+  }
+  const confirmCut = (extra) =>
+    extra <= 0
+      ? true
+      : askConfirm({
+          title: 'Remove later messages?',
+          message: `This will also remove ${extra} later message${extra === 1 ? '' : 's'}.`,
+          confirmLabel: 'Continue',
+        })
+
+  const dialogOpen = !!dialog
+  useEffect(() => {
+    if (!dialogOpen) return
+    dialogFocusRef.current = document.activeElement
+    dialogRef.current?.querySelector('button')?.focus() // Cancel is first, so it's the safe default
+    return () => dialogFocusRef.current?.focus?.()
+  }, [dialogOpen])
+  useEffect(() => () => { dialogResolve.current?.(false) }, [])
+
   const trapKeys = (ref, close) => (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation()
@@ -665,6 +697,7 @@ export default function App() {
   }
   const onModalKeyDown = trapKeys(modalRef, () => setShowSettings(false))
   const onDrawerKeyDown = trapKeys(drawerRef, () => setShowDrawer(false))
+  const onDialogKeyDown = trapKeys(dialogRef, () => answerConfirm(false))
   const closeViewer = () => setViewer(null)
   const stepViewer = (d) =>
     setViewer((v) => (v && v.items.length > 1 ? { ...v, i: (v.i + d + v.items.length) % v.items.length } : v))
@@ -766,16 +799,18 @@ export default function App() {
   }
 
   // Regenerate Monika's reply at `index`: everything from that message on is dropped.
-  const regenerateReply = (index) => {
+  const regenerateReply = async (index) => {
     if (loading || abortRef.current) return
-    if (!confirmCut(messages.length - index - 1)) return
+    if (!(await confirmCut(messages.length - index - 1))) return
+    if (abortRef.current) return
     generate(messages.slice(0, index))
   }
 
   // Regenerate the reply to the user message at `index`.
-  const regenerateFrom = (index) => {
+  const regenerateFrom = async (index) => {
     if (loading || abortRef.current) return
-    if (!confirmCut(messages.length - index - 2)) return
+    if (!(await confirmCut(messages.length - index - 2))) return
+    if (abortRef.current) return
     generate(messages.slice(0, index + 1))
   }
 
@@ -784,13 +819,14 @@ export default function App() {
     setEditing({ index, text: messages[index].text })
   }
 
-  const submitEdit = () => {
+  const submitEdit = async () => {
     if (!editing || loading || abortRef.current) return
     const { index, text } = editing
     const orig = messages[index]
     const t = text.trim()
     if (!t && !orig.image && !orig.hadImage && !orig.imgId) return
-    if (!confirmCut(messages.length - index - 2)) return
+    if (!(await confirmCut(messages.length - index - 2))) return
+    if (abortRef.current) return
     setEditing(null)
     generate([...messages.slice(0, index), { ...orig, text: t }])
   }
@@ -870,10 +906,15 @@ export default function App() {
     setDisclaimerHidden(false)
   }
 
-  const deleteChat = (id) => {
+  const deleteChat = async (id) => {
     const c = chats.find((x) => x.id === id)
-    const label = c ? `"${c.title}"` : 'this chat'
-    if (!window.confirm(`Delete ${label}? This can't be undone.`)) return
+    const ok = await askConfirm({
+      title: 'Delete this chat?',
+      message: `${c ? `"${c.title}"` : 'This chat'} and its images will be removed. This can't be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     if (id !== activeIdRef.current) {
       flushChat()
       setChats(removeChat(id))
@@ -1216,6 +1257,30 @@ export default function App() {
           </div>
         </aside>
       </div>
+
+      {dialog && (
+        <div className="overlay" role="presentation" onClick={() => answerConfirm(false)}>
+          <div
+            ref={dialogRef}
+            className="modal confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
+            aria-describedby="confirm-msg"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={onDialogKeyDown}
+          >
+            <h2 id="confirm-title">{dialog.title}</h2>
+            <p id="confirm-msg" className="confirm-msg">{dialog.message}</p>
+            <div className="row">
+              <button type="button" className="ghost" onClick={() => answerConfirm(false)}>Cancel</button>
+              <button type="button" className={dialog.danger ? 'dangerfill' : ''} onClick={() => answerConfirm(true)}>
+                {dialog.confirmLabel || 'OK'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewer && (
         <div
