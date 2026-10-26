@@ -49,6 +49,15 @@ body {
   padding: 0 14px env(safe-area-inset-bottom);
 }
 
+/* Scroll region: header + messages (header scrolls away) */
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 /* ——— Header ——— */
 .top {
   display: flex;
@@ -56,6 +65,7 @@ body {
   align-items: flex-start;
   gap: 12px;
   padding: 16px 2px 12px;
+  flex-shrink: 0;
 }
 
 .top h1 {
@@ -87,12 +97,11 @@ body {
 
 /* ——— Message log ——— */
 .log {
-  flex: 1;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 6px 2px 20px;
+  flex: 1;
 }
 
 .msg {
@@ -237,10 +246,11 @@ button.stop { min-width: 76px; }
   }
 }
 
-/* ——— Composer ——— */
+/* ——— Composer (stays pinned at bottom) ——— */
 .composer-wrap {
   padding: 10px 0 10px;
   border-top: 1px solid color-mix(in srgb, var(--green) 12%, transparent);
+  flex-shrink: 0;
 }
 
 .composer {
