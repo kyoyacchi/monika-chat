@@ -55,17 +55,17 @@ body {
 .top {
   position: absolute;
   top: 0;
-  left: 14px;
-  right: 14px;
+  left: 0;
+  right: 0;
   z-index: 5;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  padding: 16px 2px 12px;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  padding: 16px 16px 12px;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   transition: transform 0.22s ease, opacity 0.22s ease, visibility 0s linear 0s;
   will-change: transform, opacity;
 }
@@ -556,4 +556,85 @@ button.ghost:hover:not(:disabled) {
   .msg.editing {
     width: 90%;
   }
+}
+
+/* Chats dialog */
+.modal.chats { max-width: 460px; max-height: min(80dvh, 620px); grid-template-rows: auto minmax(0, 1fr) auto; }
+
+.chatlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chatlist li {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  border: 1.5px solid color-mix(in srgb, var(--green) 30%, transparent);
+  border-radius: 13px;
+  padding: 4px;
+}
+
+.chatlist li.active {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+
+button.chatopen {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  background: transparent;
+  color: var(--ink);
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+button.chatopen:hover:not(:disabled) { background: color-mix(in srgb, var(--green) 10%, transparent); filter: none; }
+
+.chattitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  min-width: 0;
+}
+
+.ttext {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--card);
+  background: var(--green);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.chatmeta {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+button.danger { align-self: center; color: #b3261e; border-color: color-mix(in srgb, #b3261e 50%, transparent); }
+button.danger:hover:not(:disabled) { background: #ffe0e0; border-color: #b3261e; }
+
+@media (prefers-color-scheme: dark) {
+  button.danger { color: #ffb3b3; border-color: color-mix(in srgb, #ffb3b3 50%, transparent); }
+  button.danger:hover:not(:disabled) { background: #4a2228; border-color: #ffb3b3; }
 }
