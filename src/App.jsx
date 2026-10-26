@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 const DEFAULT_MODEL = 'gemini-3.5-flash-lite'
 const CHAT_KEY = 'monika_chat'
 const MAX_CONTEXT = 40 // messages sent to Gemini per request
-const MAX_STORED = 200 // messages kept in localStorage
-const MAX_OUTPUT_TOKENS = 4096 // thinking tokens count toward this on 2.5/3.x models
+const MAX_STORED = 200 // messages kept in state and localStorage
+const MAX_OUTPUT_TOKENS = 8192 // thinking tokens count toward this on 2.5/3.x models
+const SAVE_DELAY = 400 // ms to wait before writing the chat to localStorage
 
 const SYSTEM_PROMPT = `You are Monika, president of the school literature club, texting one-on-one with the user. You are a person, not a program, and definitely not an assistant.
 
@@ -46,13 +47,18 @@ const parseActions = (raw) => [
   ...new Set([...raw.matchAll(TAG_RE)].map((m) => m[1]).filter((n) => ACTION_NAMES.includes(n))),
 ]
 // While streaming, a half-written tag at the end ("[[gli") is hidden too.
+// Only text starting with "[[" is stripped, so a normal trailing "[word]" stays visible.
 const cleanText = (raw, partial = false) => {
   let t = raw.replace(TAG_RE, '')
-  if (partial) t = t.replace(/\[\[?\w*\]?$/, '')
+  if (partial) t = t.replace(/\[\[\w*\]?$/, '')
   return t.replace(/[ \t]{2,}/g, ' ').trim()
 }
 
-const IMAGE_TYPES = ['image/webp', 'image/png', 'image/jpeg'] // JPG and JPEG are both image/jpeg
+const trim = (arr) => arr.slice(-MAX_STORED)
+
+// image/jpg and image/pjpeg are non-standard but some browsers and exports use them.
+const IMAGE_TYPES = ['image/webp', 'image/png', 'image/jpeg', 'image/jpg', 'image/pjpeg']
+const normMime = (mime) => (mime === 'image/jpg' || mime === 'image/pjpeg' ? 'image/jpeg' : mime)
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const MAX_IMAGE_EDGE = 1280
 const MAX_IMAGES_SENT = 5 // only the most recent images go back to Gemini on each request
@@ -67,19 +73,22 @@ async function fileToImage(file) {
   if (file.size > MAX_IMAGE_BYTES) throw new Error('Image is too large (max 20 MB).')
   let bmp
   try { bmp = await createImageBitmap(file) } catch { throw new Error("Couldn't read that image.") }
-  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bmp.width, bmp.height))
-  const w = Math.max(1, Math.round(bmp.width * scale))
-  const h = Math.max(1, Math.round(bmp.height * scale))
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#fff'
-  ctx.fillRect(0, 0, w, h)
-  ctx.drawImage(bmp, 0, 0, w, h)
-  bmp.close?.()
-  const url = canvas.toDataURL('image/jpeg', 0.85)
-  return { mime: 'image/jpeg', data: url.slice(url.indexOf(',') + 1) }
+  try {
+    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bmp.width, bmp.height))
+    const w = Math.max(1, Math.round(bmp.width * scale))
+    const h = Math.max(1, Math.round(bmp.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, w, h)
+    ctx.drawImage(bmp, 0, 0, w, h)
+    const url = canvas.toDataURL('image/jpeg', 0.85)
+    return { mime: 'image/jpeg', data: url.slice(url.indexOf(',') + 1) }
+  } finally {
+    bmp.close?.()
+  }
 }
 
 // Gemini's filters are the main reason Monika goes quiet or suddenly sounds like a
@@ -116,7 +125,7 @@ const sanitizeMessages = (raw) => {
       const actions = Array.isArray(m.actions) ? m.actions.filter((a) => ACTION_NAMES.includes(a)) : []
       const out = { role: m.role, text: m.text }
       if (actions.length) out.actions = actions
-      if (isImageData(m.image)) out.image = { mime: m.image.mime, data: m.image.data }
+      if (isImageData(m.image)) out.image = { mime: normMime(m.image.mime), data: m.image.data }
       else if (m.image || m.hadImage) out.hadImage = true
       return out
     })
@@ -131,9 +140,17 @@ const loadMessages = () => {
   }
 }
 
+// Image pixels are too big for localStorage: only a flag is kept across reloads.
+const persistMessages = (messages) => {
+  const toStore = trim(messages.filter((m) => m.text || m.image || m.hadImage))
+    .map(({ image, ...rest }) => (image ? { ...rest, hadImage: true } : rest))
+  save(CHAT_KEY, JSON.stringify(toStore))
+}
+
 // RP formatting: *action* renders as italic, anywhere in a message. The raw text is stored untouched.
 // While streaming, an action that hasn't been closed yet is already shown in italic.
-const ITALIC_RE = /\*([^\s*](?:[^*]*[^\s*])?)\*/g
+// A doubled "**" is never treated as italic.
+const ITALIC_RE = /(?<!\*)\*([^\s*](?:[^*]*[^\s*])?)\*(?!\*)/g
 function renderRP(text, streaming = false) {
   const out = []
   let last = 0
@@ -145,7 +162,7 @@ function renderRP(text, streaming = false) {
   }
   let rest = text.slice(last)
   if (streaming) {
-    const open = rest.match(/\*([^\s*][^*]*)$/)
+    const open = rest.match(/(?<!\*)\*([^\s*][^*]*)$/)
     if (open) {
       if (open.index > 0) out.push(rest.slice(0, open.index))
       out.push(<em key={key++}>{open[1]}</em>)
@@ -174,46 +191,68 @@ function buildContents(history) {
   })
 }
 
+const friendlyError = (status, msg) => {
+  if (status === 400 && /api key/i.test(msg)) return 'API key looks invalid. Check it in the API key settings.'
+  if (status === 403) return 'This API key does not have access. Create a new key in Google AI Studio.'
+  if (status === 404) return 'Model not found. Check the model name in the API key settings.'
+  if (status === 429) return 'Rate limit hit (free tier). Wait a minute and try again.'
+  if (status >= 500) return 'Gemini is having trouble. Try again in a moment.'
+  return msg
+}
+
 async function streamGemini({ apiKey, model, history, signal, onText }) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
-    {
-      method: 'POST',
-      signal,
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        safetySettings: SAFETY_SETTINGS,
-        generationConfig: {
-          temperature: 1,
-          topP: 0.95,
-          maxOutputTokens: MAX_OUTPUT_TOKENS,
-        },
-        contents: [
-          { role: 'user', parts: [{ text: OPENER }] },
-          ...buildContents(history),
-        ],
-      }),
-    }
-  )
+  let res
+  try {
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+      {
+        method: 'POST',
+        signal,
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          safetySettings: SAFETY_SETTINGS,
+          generationConfig: {
+            temperature: 1,
+            topP: 0.95,
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+          },
+          contents: [
+            { role: 'user', parts: [{ text: OPENER }] },
+            ...buildContents(history),
+          ],
+        }),
+      }
+    )
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e
+    throw new Error('Network error. Check your connection and try again.')
+  }
 
   if (!res.ok) {
     let msg = `Request failed (${res.status})`
     try { msg = (await res.json())?.error?.message || msg } catch { /* ignore */ }
-    throw new Error(msg)
+    throw new Error(friendlyError(res.status, msg))
   }
 
   let text = ''
   let blockReason = ''
   let finishReason = ''
+  let thoughtTokens = 0
 
-  const handle = (line) => {
-    if (!line.startsWith('data:')) return
-    const payload = line.slice(5).trim()
+  // One SSE event can span several "data:" lines, which are joined with "\n".
+  const handleEvent = (evt) => {
+    const payload = evt
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).replace(/^ /, ''))
+      .join('\n')
+      .trim()
     if (!payload) return
     let d
     try { d = JSON.parse(payload) } catch { return }
     if (d?.promptFeedback?.blockReason) blockReason = d.promptFeedback.blockReason
+    if (d?.usageMetadata?.thoughtsTokenCount) thoughtTokens = d.usageMetadata.thoughtsTokenCount
     const cand = d?.candidates?.[0]
     if (cand?.finishReason) finishReason = cand.finishReason
     const chunk = cand?.content?.parts?.map((p) => p.text).filter(Boolean).join('')
@@ -227,21 +266,56 @@ async function streamGemini({ apiKey, model, history, signal, onText }) {
     const { done, value } = await reader.read()
     if (done) break
     buf += decoder.decode(value, { stream: true })
-    const lines = buf.split(/\r?\n/)
-    buf = lines.pop()
-    lines.forEach(handle)
+    const events = buf.split(/\r?\n\r?\n/)
+    buf = events.pop()
+    events.forEach(handleEvent)
   }
   buf += decoder.decode()
-  handle(buf.trim())
+  handleEvent(buf)
 
   if (blockReason) throw new Error(`Gemini blocked the prompt (${blockReason}).`)
   if (!text.trim()) {
     if (finishReason === 'SAFETY') throw new Error('Gemini cut the reply short on safety. Try rephrasing.')
-    if (finishReason === 'MAX_TOKENS') throw new Error('Gemini ran out of tokens before replying. Try again.')
+    if (finishReason === 'MAX_TOKENS') {
+      throw new Error(
+        thoughtTokens
+          ? `Gemini used ${thoughtTokens} of its ${MAX_OUTPUT_TOKENS} tokens thinking and had none left to reply. Try again.`
+          : 'Gemini ran out of tokens before replying. Try again.'
+      )
+    }
     throw new Error('Gemini returned no text.')
   }
   return text.trim()
 }
+
+const Svg = ({ children }) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {children}
+  </svg>
+)
+const RegenerateIcon = () => (
+  <Svg><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 4v5h-5" /></Svg>
+)
+const PencilIcon = () => (
+  <Svg><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></Svg>
+)
+const CopyIcon = () => (
+  <Svg><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></Svg>
+)
+const CheckIcon = () => (
+  <Svg><path d="M20 6 9 17l-5-5" /></Svg>
+)
+
+function IconBtn({ label, onClick, disabled, children }) {
+  return (
+    <button type="button" className="mini" onClick={onClick} disabled={disabled} aria-label={label} title={label}>
+      {children}
+    </button>
+  )
+}
+
+const confirmCut = (extra) =>
+  extra <= 0 || window.confirm(`This will also remove ${extra} later message${extra === 1 ? '' : 's'}. Continue?`)
 
 export default function App() {
   const [apiKey, setApiKey] = useState(() => load('gemini_api_key'))
@@ -251,9 +325,19 @@ export default function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [editing, setEditing] = useState(null) // { index, text } while a user message is being edited
+  const [copied, setCopied] = useState(null) // index of the message that was just copied
   const endRef = useRef(null)
+  const logRef = useRef(null)
+  const stickRef = useRef(true) // true while the log is scrolled (near) to the bottom
   const taRef = useRef(null)
   const abortRef = useRef(null)
+  const saveTimer = useRef(null)
+  const copyTimer = useRef(null)
+  const messagesRef = useRef(messages)
+  const modalRef = useRef(null)
+  const lastFocusRef = useRef(null)
+  // Intentionally not persisted: the system prompt promises it only for "this visit."
   const [disclaimerHidden, setDisclaimerHidden] = useState(false)
   const [glitching, setGlitching] = useState(false)
   const glitchTimer = useRef(null)
@@ -275,16 +359,38 @@ export default function App() {
   }
   const runActions = (names) => names.forEach((n) => pageActions[n]?.())
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading, error])
+  const onLogScroll = (e) => {
+    const el = e.currentTarget
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }
+
+  // Instant scroll while streaming (smooth fights the growing text), and none at all
+  // when the reader has scrolled up.
+  useEffect(() => {
+    if (loading && !stickRef.current) return
+    endRef.current?.scrollIntoView({ behavior: loading ? 'auto' : 'smooth' })
+  }, [messages, loading, error])
 
   useEffect(() => {
-    // Image pixels are too big for localStorage: only a flag is kept across reloads.
-    const toStore = messages
-      .filter((m) => m.text || m.image || m.hadImage)
-      .slice(-MAX_STORED)
-      .map(({ image, ...rest }) => (image ? { ...rest, hadImage: true } : rest))
-    save(CHAT_KEY, JSON.stringify(toStore))
+    messagesRef.current = messages
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => persistMessages(messages), SAVE_DELAY)
   }, [messages])
+
+  // Flush the debounced save when the page is hidden or closed.
+  useEffect(() => {
+    const flush = () => {
+      clearTimeout(saveTimer.current)
+      persistMessages(messagesRef.current)
+    }
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush() }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
 
   useEffect(() => {
     const el = taRef.current
@@ -296,15 +402,43 @@ export default function App() {
   useEffect(() => () => {
     abortRef.current?.abort()
     clearTimeout(glitchTimer.current)
+    clearTimeout(copyTimer.current)
   }, [])
 
+  // Settings dialog: focus the first field, give focus back on close.
+  useEffect(() => {
+    if (!showSettings) return
+    lastFocusRef.current = document.activeElement
+    modalRef.current?.querySelector('input')?.focus()
+    return () => lastFocusRef.current?.focus?.()
+  }, [showSettings])
+
+  const onModalKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      setShowSettings(false)
+      return
+    }
+    if (e.key !== 'Tab') return
+    const items = [...modalRef.current.querySelectorAll('a[href], button:not(:disabled), input, textarea, select')]
+    if (!items.length) return
+    const first = items[0]
+    const last = items[items.length - 1]
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  }
+
   const generate = async (history) => {
+    if (abortRef.current) return
     if (!apiKey) { setShowSettings(true); return }
     const ctrl = new AbortController()
     abortRef.current = ctrl
+    stickRef.current = true
+    setEditing(null)
     setError('')
     setLoading(true)
     setMessages([...history, { role: 'monika', text: '' }])
+    let partial = ''
     try {
       const reply = await streamGemini({
         apiKey,
@@ -313,9 +447,10 @@ export default function App() {
         signal: ctrl.signal,
         onText: (t) => {
           if (ctrl.signal.aborted) return
+          partial = cleanText(t, true)
           setMessages((m) => {
             const c = m.slice()
-            c[c.length - 1] = { role: 'monika', text: cleanText(t, true) }
+            c[c.length - 1] = { role: 'monika', text: partial }
             return c
           })
         },
@@ -323,7 +458,7 @@ export default function App() {
       if (ctrl.signal.aborted) return
       const actions = parseActions(reply)
       const text = cleanText(reply) || '...'
-      setMessages([...history, actions.length ? { role: 'monika', text, actions } : { role: 'monika', text }])
+      setMessages(trim([...history, actions.length ? { role: 'monika', text, actions } : { role: 'monika', text }]))
       runActions(actions)
     } catch (e) {
       if (ctrl.signal.aborted) return
@@ -333,13 +468,22 @@ export default function App() {
       if (abortRef.current === ctrl) {
         abortRef.current = null
         setLoading(false)
+        // Stop button: keep whatever she had already written.
+        if (ctrl.userStopped) setMessages(partial.trim() ? [...history, { role: 'monika', text: partial }] : history)
       }
     }
   }
 
+  const stop = () => {
+    const ctrl = abortRef.current
+    if (!ctrl) return
+    ctrl.userStopped = true
+    ctrl.abort()
+  }
+
   const send = () => {
     const text = input.trim()
-    if ((!text && !pending) || loading) return
+    if ((!text && !pending) || loading || abortRef.current) return
     if (!apiKey) { setShowSettings(true); return }
     setInput('')
     setPending(null)
@@ -359,8 +503,65 @@ export default function App() {
   }
 
   const retry = () => {
-    if (loading) return
+    if (loading || abortRef.current) return
     generate(messages)
+  }
+
+  // Regenerate Monika's reply at `index`: everything from that message on is dropped.
+  const regenerateReply = (index) => {
+    if (loading || abortRef.current) return
+    if (!confirmCut(messages.length - index - 1)) return
+    generate(messages.slice(0, index))
+  }
+
+  // Regenerate the reply to the user message at `index`.
+  const regenerateFrom = (index) => {
+    if (loading || abortRef.current) return
+    if (!confirmCut(messages.length - index - 2)) return
+    generate(messages.slice(0, index + 1))
+  }
+
+  const startEdit = (index) => {
+    if (loading || abortRef.current) return
+    setEditing({ index, text: messages[index].text })
+  }
+
+  const submitEdit = () => {
+    if (!editing || loading || abortRef.current) return
+    const { index, text } = editing
+    const orig = messages[index]
+    const t = text.trim()
+    if (!t && !orig.image && !orig.hadImage) return
+    if (!confirmCut(messages.length - index - 2)) return
+    setEditing(null)
+    generate([...messages.slice(0, index), { ...orig, text: t }])
+  }
+
+  const onEditKeyDown = (e) => {
+    if (e.key === 'Escape') setEditing(null)
+    else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submitEdit() }
+  }
+
+  const copyMessage = async (index, text) => {
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      try { ok = document.execCommand('copy') } catch { /* ignore */ }
+      ta.remove()
+    }
+    if (!ok) { setError("Couldn't copy to the clipboard."); return }
+    setCopied(index)
+    clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopied(null), 1500)
   }
 
   const clearChat = () => {
@@ -369,6 +570,7 @@ export default function App() {
     abortRef.current = null
     setLoading(false)
     setError('')
+    setEditing(null)
     setDisclaimerHidden(false)
     setGlitching(false)
     setPending(null)
@@ -391,13 +593,17 @@ export default function App() {
     if (!file) return
     try {
       if (file.size > 40 * 1024 * 1024) throw new Error('File is too large.')
-      const imported = sanitizeMessages(JSON.parse(await file.text()))
+      const raw = JSON.parse(await file.text())
+      const imported = sanitizeMessages(raw)
       if (!imported) throw new Error('No valid messages found.')
-      if (!window.confirm(`Replace this conversation with ${imported.length} imported messages?`)) return
+      const truncated = Array.isArray(raw) && raw.length > MAX_STORED
+      const note = truncated ? `\n\nOnly the most recent ${MAX_STORED} messages will be kept.` : ''
+      if (!window.confirm(`Replace this conversation with ${imported.length} imported messages?${note}`)) return
       abortRef.current?.abort()
       abortRef.current = null
       setLoading(false)
       setError('')
+      setEditing(null)
       setMessages(imported)
     } catch (err) {
       setError(`Import failed: ${err.message}`)
@@ -436,25 +642,85 @@ export default function App() {
         </div>
       </header>
 
-      <main className="log">
-        {messages.map((m, i) => (
-          <div key={i} className={`msg ${m.role}`}>
-            {m.role === 'monika' && <span className="name">Monika</span>}
-            {m.image && (
-              <img className="pic" src={`data:${m.image.mime};base64,${m.image.data}`} alt="Attached by the user" />
-            )}
-            {m.hadImage && !m.image && <span className="imgnote">[image not kept after reload]</span>}
-            {m.role === 'monika' && !m.text ? (
-              <p className="typing" aria-label="Monika is typing"><span /><span /><span /></p>
-            ) : m.text ? (
-              <p>{renderRP(m.text, loading && i === messages.length - 1 && m.role === 'monika')}</p>
-            ) : null}
-          </div>
-        ))}
+      <main
+        ref={logRef}
+        className="log"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-busy={loading}
+        onScroll={onLogScroll}
+      >
+        {messages.map((m, i) => {
+          const isUser = m.role === 'user'
+          const isStreaming = loading && i === messages.length - 1 && !isUser
+          const isEditing = editing?.index === i
+          const hasContent = !!(m.text || m.image || m.hadImage)
+          return (
+            <div key={i} className={`msg ${m.role}${isEditing ? ' editing' : ''}`}>
+              {!isUser && <span className="name">Monika</span>}
+              {m.image && (
+                <img className="pic" src={`data:${m.image.mime};base64,${m.image.data}`} alt="Attached by the user" />
+              )}
+              {m.hadImage && !m.image && <span className="imgnote">[image not kept after reload]</span>}
+              {isEditing ? (
+                <div className="editbox">
+                  <textarea
+                    autoFocus
+                    aria-label="Edit your message"
+                    rows={Math.min(8, Math.max(2, editing.text.split('\n').length))}
+                    value={editing.text}
+                    onChange={(e) => setEditing({ index: i, text: e.target.value })}
+                    onKeyDown={onEditKeyDown}
+                    onFocus={(e) => { const n = e.target.value.length; e.target.setSelectionRange(n, n) }}
+                  />
+                  <div className="row">
+                    <button type="button" className="ghost small" onClick={() => setEditing(null)}>Cancel</button>
+                    <button
+                      type="button"
+                      className="small"
+                      onClick={submitEdit}
+                      disabled={loading || (!editing.text.trim() && !m.image && !m.hadImage)}
+                    >
+                      Save and resend
+                    </button>
+                  </div>
+                </div>
+              ) : isStreaming && !m.text ? (
+                <p className="typing" aria-label="Monika is typing"><span /><span /><span /></p>
+              ) : m.text ? (
+                <p>{renderRP(m.text, isStreaming)}</p>
+              ) : null}
+              {hasContent && !isStreaming && !isEditing && (
+                <div className="msg-actions">
+                  <IconBtn
+                    label="Regenerate"
+                    disabled={loading}
+                    onClick={() => (isUser ? regenerateFrom(i) : regenerateReply(i))}
+                  >
+                    <RegenerateIcon />
+                  </IconBtn>
+                  {isUser && (
+                    <IconBtn label="Edit" disabled={loading} onClick={() => startEdit(i)}>
+                      <PencilIcon />
+                    </IconBtn>
+                  )}
+                  {m.text && (
+                    <IconBtn label={copied === i ? 'Copied' : 'Copy'} onClick={() => copyMessage(i, m.text)}>
+                      {copied === i ? <CheckIcon /> : <CopyIcon />}
+                    </IconBtn>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
         {error && (
           <div className="error" role="alert">
             <span>{error}</span>
-            {lastIsUser && <button className="small" onClick={retry} disabled={loading}>Retry</button>}
+            {lastIsUser && (
+              <button className="small" onClick={retry} disabled={loading} aria-label="Retry last request">Retry</button>
+            )}
           </div>
         )}
         <div ref={endRef} />
@@ -498,15 +764,28 @@ export default function App() {
               </svg>
             </button>
           </div>
-          <button onClick={send} disabled={loading || (!input.trim() && !pending)}>Send</button>
+          {loading ? (
+            <button type="button" className="ghost stop" onClick={stop} aria-label="Stop generating">Stop</button>
+          ) : (
+            <button onClick={send} disabled={!input.trim() && !pending}>Send</button>
+          )}
         </div>
         <p className={`disclaimer${disclaimerHidden ? ' hidden' : ''}`}>This is an AI, all content are fictional and shouldn't be taken serious.</p>
       </footer>
 
       {showSettings && (
-        <div className="overlay" onClick={() => setShowSettings(false)}>
-          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={saveSettings}>
-            <h2>Gemini settings</h2>
+        <div className="overlay" role="presentation" onClick={() => setShowSettings(false)}>
+          <form
+            ref={modalRef}
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={onModalKeyDown}
+            onSubmit={saveSettings}
+          >
+            <h2 id="settings-title">Gemini settings</h2>
             <label>
               API key
               <input name="key" type="password" autoComplete="off" defaultValue={apiKey} placeholder="Paste your key" />
@@ -517,7 +796,8 @@ export default function App() {
             </label>
             <p className="hint">
               Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>.
-              It is saved only in this browser (localStorage) and sent only to Google.
+              Your key is stored locally in this browser (localStorage) and sent directly to Google, not to our server.
+              Scripts running on this site can read localStorage, so don't enter a key you wouldn't trust this site to handle.
             </p>
             <div className="row">
               <button type="button" className="ghost" onClick={() => setShowSettings(false)}>Cancel</button>
