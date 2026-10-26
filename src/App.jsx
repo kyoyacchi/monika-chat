@@ -427,19 +427,20 @@ export default function App() {
     if (!items.length) return
     const first = items[0]
     const last = items[items.length - 1]
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
   }
 
   const generate = async (history) => {
-    if (abortRef.current) return
-    if (!apiKey) { setShowSettings(true); return }
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    stickRef.current = true
-    setEditing(null)
-    setError('')
     setLoading(true)
+    setError('')
     setMessages([...history, { role: 'monika', text: '' }])
     let partial = ''
     try {
@@ -449,13 +450,8 @@ export default function App() {
         history,
         signal: ctrl.signal,
         onText: (t) => {
-          if (ctrl.signal.aborted) return
           partial = cleanText(t, true)
-          setMessages((m) => {
-            const c = m.slice()
-            c[c.length - 1] = { role: 'monika', text: partial }
-            return c
-          })
+          setMessages([...history, { role: 'monika', text: partial }])
         },
       })
       if (ctrl.signal.aborted) return
@@ -623,7 +619,8 @@ export default function App() {
     const key = f.get('key').trim()
     const mdl = f.get('model').trim() || DEFAULT_MODEL
     setApiKey(key); setModel(mdl)
-    save('gemini_api_key', key); save('gemini_model', mdl)
+    save('gemini_api_key', key)
+    save('gemini_model', mdl)
     setShowSettings(false)
   }
 
@@ -631,29 +628,30 @@ export default function App() {
 
   return (
     <div className={`app${glitching ? ' glitch' : ''}`}>
-      <header className="top">
-        <div>
-          <h1>Monika <span className="badge" title="This is AI">AI</span></h1>
-          <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
-        </div>
-        <div className="actions">
-          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
-          <button className="ghost small" onClick={() => fileRef.current?.click()}>Import</button>
-          <button className="ghost small" onClick={exportChat}>Export</button>
-          <button className="ghost small" onClick={clearChat}>Clear</button>
-          <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
-        </div>
-      </header>
-
-      <main
+      <div
         ref={logRef}
-        className="log"
+        className="scroll"
         role="log"
         aria-live="polite"
         aria-relevant="additions text"
         aria-busy={loading}
         onScroll={onLogScroll}
       >
+        <header className="top">
+          <div>
+            <h1>Monika <span className="badge" title="This is AI">AI</span></h1>
+            <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
+          </div>
+          <div className="actions">
+            <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
+            <button className="ghost small" onClick={() => fileRef.current?.click()}>Import</button>
+            <button className="ghost small" onClick={exportChat}>Export</button>
+            <button className="ghost small" onClick={clearChat}>Clear</button>
+            <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
+          </div>
+        </header>
+
+        <main className="log">
         {messages.map((m, i) => {
           const isUser = m.role === 'user'
           const isStreaming = loading && i === messages.length - 1 && !isUser
@@ -683,51 +681,63 @@ export default function App() {
                       type="button"
                       className="small"
                       onClick={submitEdit}
-                      disabled={loading || (!editing.text.trim() && !m.image && !m.hadImage)}
+                      disabled={!editing.text.trim() && !messages[i].image && !messages[i].hadImage}
                     >
-                      Save and resend
+                      Save & resend
                     </button>
                   </div>
                 </div>
-              ) : isStreaming && !m.text ? (
-                <p className="typing" aria-label="Monika is typing"><span /><span /><span /></p>
-              ) : m.text ? (
-                <p>{renderRP(m.text, isStreaming)}</p>
-              ) : null}
-              {hasContent && !isStreaming && !isEditing && (
-                <div className="msg-actions">
-                  <IconBtn
-                    label="Regenerate"
-                    disabled={loading}
-                    onClick={() => (isUser ? regenerateFrom(i) : regenerateReply(i))}
-                  >
-                    <RegenerateIcon />
-                  </IconBtn>
-                  {isUser && (
-                    <IconBtn label="Edit" disabled={loading} onClick={() => startEdit(i)}>
-                      <PencilIcon />
-                    </IconBtn>
-                  )}
-                  {m.text && (
-                    <IconBtn label={copied === i ? 'Copied' : 'Copy'} onClick={() => copyMessage(i, m.text)}>
-                      {copied === i ? <CheckIcon /> : <CopyIcon />}
-                    </IconBtn>
-                  )}
-                </div>
+              ) : (
+                hasContent && (
+                  <>
+                    {m.text ? <p>{renderRP(m.text, isStreaming)}</p> : null}
+                    <div className="msg-actions">
+                      {!isUser && (
+                        <IconBtn label="Regenerate" onClick={() => regenerateReply(i)} disabled={loading}>
+                          <RegenerateIcon />
+                        </IconBtn>
+                      )}
+                      {isUser && (
+                        <>
+                          <IconBtn label="Edit" onClick={() => startEdit(i)} disabled={loading}>
+                            <PencilIcon />
+                          </IconBtn>
+                          <IconBtn label="Regenerate reply" onClick={() => regenerateFrom(i)} disabled={loading}>
+                            <RegenerateIcon />
+                          </IconBtn>
+                        </>
+                      )}
+                      {m.text && (
+                        <IconBtn label={copied === i ? 'Copied' : 'Copy'} onClick={() => copyMessage(i, m.text)}>
+                          {copied === i ? <CheckIcon /> : <CopyIcon />}
+                        </IconBtn>
+                      )}
+                    </div>
+                  </>
+                )
               )}
             </div>
           )
         })}
+        {loading && messages[messages.length - 1]?.role === 'user' && (
+          <div className="msg monika">
+            <span className="name">Monika</span>
+            <p className="typing" aria-label="Monika is typing">
+              <span /><span /><span />
+            </p>
+          </div>
+        )}
         {error && (
           <div className="error" role="alert">
             <span>{error}</span>
             {lastIsUser && (
-              <button className="small" onClick={retry} disabled={loading} aria-label="Retry last request">Retry</button>
+              <button type="button" className="ghost small" onClick={retry} aria-label="Retry the last request">Retry</button>
             )}
           </div>
         )}
         <div ref={endRef} />
-      </main>
+        </main>
+      </div>
 
       <footer className="composer-wrap">
         {pending && (
