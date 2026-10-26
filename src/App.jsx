@@ -770,7 +770,7 @@ export default function App() {
             <button onClick={send} disabled={!input.trim() && !pending}>Send</button>
           )}
         </div>
-        <p className={`disclaimer${disclaimerHidden ? ' hidden' : ''}`}>This is an AI, all content are fictional and shouldn't be taken serious.</p>
+        <p className={`disclaimer${disclaimerHidden ? ' hidden' : ''}`}>This is an AI, all content is fictional and shouldn't be taken seriously.</p>
       </footer>
 
       {showSettings && (
