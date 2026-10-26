@@ -427,6 +427,23 @@ const CheckIcon = () => (
   <Svg><path d="M20 6 9 17l-5-5" /></Svg>
 )
 
+const Ico = ({ size = 20, sw = 2, children }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {children}
+  </svg>
+)
+const MenuIcon = () => <Ico><path d="M4 7h16M4 12h16M4 17h10" /></Ico>
+const PlusIcon = () => <Ico sw={2.4}><path d="M12 5v14M5 12h14" /></Ico>
+const CloseIcon = () => <Ico><path d="M6 6l12 12M18 6 6 18" /></Ico>
+const SendIcon = () => <Ico size={20} sw={2.6}><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></Ico>
+const StopIcon = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
+const ImageIcon = () => <Ico><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></Ico>
+const TrashIcon = () => <Ico size={18}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /><path d="M10 11v5M14 11v5" /></Ico>
+const ImportIcon = () => <Ico><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></Ico>
+const ExportIcon = () => <Ico><path d="M12 15V3" /><path d="m7 8 5-5 5 5" /><path d="M4 21h16" /></Ico>
+const KeyIcon = () => <Ico><circle cx="8" cy="15" r="4" /><path d="m11 12 9-9" /><path d="m16 7 3 3" /></Ico>
+const ChevronIcon = ({ dir }) => <Ico size={24}><path d={dir === 'left' ? 'm15 5-7 7 7 7' : 'm9 5 7 7-7 7'} /></Ico>
+
 function IconBtn({ label, onClick, disabled, children }) {
   return (
     <button type="button" className="mini" onClick={onClick} disabled={disabled} aria-label={label} title={label}>
@@ -446,7 +463,8 @@ export default function App() {
   const [messages, setMessages] = useState(boot.messages)
   const [chats, setChats] = useState(boot.index)
   const [activeId, setActiveId] = useState(boot.activeId)
-  const [showChats, setShowChats] = useState(false)
+  const [showDrawer, setShowDrawer] = useState(false)
+  const [viewer, setViewer] = useState(null) // { items: [{ src }], i } while the image viewer is open
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -463,6 +481,11 @@ export default function App() {
   const activeIdRef = useRef(boot.activeId)
   const instantRef = useRef(false)
   const modalRef = useRef(null)
+  const drawerRef = useRef(null)
+  const drawerFocusRef = useRef(null)
+  const viewerRef = useRef(null)
+  const viewerFocusRef = useRef(null)
+  const barRef = useRef(null)
   const lastFocusRef = useRef(null)
   // Intentionally not persisted: the system prompt promises it only for "this visit."
   const [disclaimerHidden, setDisclaimerHidden] = useState(false)
@@ -568,12 +591,16 @@ export default function App() {
 
   useEffect(() => { hydrateImages(messagesRef.current, activeIdRef.current) }, [])
 
-  // Header floats over the log, so the log reserves exactly the header's height.
+  // Header and composer float over the log (glass), so the log reserves exactly their heights.
   useEffect(() => {
     const app = appRef.current
     const head = headerRef.current
-    if (!app || !head) return
-    const sync = () => app.style.setProperty('--top-h', `${head.offsetHeight}px`)
+    const bar = barRef.current
+    if (!app || !head || !bar) return
+    const sync = () => {
+      app.style.setProperty('--top-h', `${head.offsetTop + head.offsetHeight}px`)
+      app.style.setProperty('--bot-h', `${bar.offsetHeight}px`)
+    }
     sync()
     if (typeof ResizeObserver === 'undefined') {
       window.addEventListener('resize', sync)
@@ -581,6 +608,7 @@ export default function App() {
     }
     const ro = new ResizeObserver(sync)
     ro.observe(head)
+    ro.observe(bar)
     return () => ro.disconnect()
   }, [])
 
@@ -593,21 +621,37 @@ export default function App() {
 
   // Settings dialog: focus the first field, give focus back on close.
   useEffect(() => {
-    if (!showSettings && !showChats) return
+    if (!showSettings) return
     lastFocusRef.current = document.activeElement
     modalRef.current?.querySelector('input, button')?.focus()
     return () => lastFocusRef.current?.focus?.()
-  }, [showSettings, showChats])
+  }, [showSettings])
 
-  const onModalKeyDown = (e) => {
+  // Drawer: focus moves in on open and back to the menu button on close.
+  useEffect(() => {
+    if (!showDrawer) return
+    drawerFocusRef.current = document.activeElement
+    drawerRef.current?.querySelector('button')?.focus()
+    return () => drawerFocusRef.current?.focus?.()
+  }, [showDrawer])
+
+  // Image viewer: same idea.
+  const viewerOpen = !!viewer
+  useEffect(() => {
+    if (!viewerOpen) return
+    viewerFocusRef.current = document.activeElement
+    viewerRef.current?.querySelector('button')?.focus()
+    return () => viewerFocusRef.current?.focus?.()
+  }, [viewerOpen])
+
+  const trapKeys = (ref, close) => (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation()
-      setShowSettings(false)
-      setShowChats(false)
+      close()
       return
     }
-    if (e.key !== 'Tab') return
-    const items = [...modalRef.current.querySelectorAll('a[href], button:not(:disabled), input, textarea, select')]
+    if (e.key !== 'Tab' || !ref.current) return
+    const items = [...ref.current.querySelectorAll('a[href], button:not(:disabled), input, textarea, select')]
     if (!items.length) return
     const first = items[0]
     const last = items[items.length - 1]
@@ -618,6 +662,30 @@ export default function App() {
       e.preventDefault()
       first.focus()
     }
+  }
+  const onModalKeyDown = trapKeys(modalRef, () => setShowSettings(false))
+  const onDrawerKeyDown = trapKeys(drawerRef, () => setShowDrawer(false))
+  const closeViewer = () => setViewer(null)
+  const stepViewer = (d) =>
+    setViewer((v) => (v && v.items.length > 1 ? { ...v, i: (v.i + d + v.items.length) % v.items.length } : v))
+  const trapViewer = trapKeys(viewerRef, closeViewer)
+  const onViewerKeyDown = (e) => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stepViewer(-1) }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); stepViewer(1) }
+    else trapViewer(e)
+  }
+  const openViewer = (index) => {
+    const items = []
+    let i = 0
+    messages.forEach((m, k) => {
+      if (!m.image) return
+      if (k === index) i = items.length
+      items.push({ src: `data:${m.image.mime};base64,${m.image.data}` })
+    })
+    if (items.length) setViewer({ items, i })
+  }
+  const openPendingViewer = () => {
+    if (pending) setViewer({ items: [{ src: `data:${pending.mime};base64,${pending.data}` }], i: 0 })
   }
 
   const generate = async (history) => {
@@ -785,15 +853,15 @@ export default function App() {
   }
 
   const openChat = (id) => {
-    if (id === activeIdRef.current) { setShowChats(false); return }
+    if (id === activeIdRef.current) { setShowDrawer(false); return }
     leaveCurrent()
     openLoaded(id, readChat(id))
     setChats(readIndex())
-    setShowChats(false)
+    setShowDrawer(false)
   }
 
   const newChat = () => {
-    setShowChats(false)
+    setShowDrawer(false)
     if (isEmptyChat(messagesRef.current)) { taRef.current?.focus(); return }
     leaveCurrent()
     const made = createChat()
@@ -824,9 +892,9 @@ export default function App() {
     openLoaded(next.id, readChat(next.id))
   }
 
-  const openChatList = () => {
+  const openDrawer = () => {
     flushChat()
-    setShowChats(true)
+    setShowDrawer(true)
   }
 
   const exportChat = () => {
@@ -849,6 +917,7 @@ export default function App() {
     const file = e.target.files?.[0]
     e.target.value = '' // lets the same file be picked again later
     if (!file) return
+    setShowDrawer(false)
     try {
       if (file.size > 40 * 1024 * 1024) throw new Error('File is too large.')
       const raw = JSON.parse(await file.text())
@@ -888,19 +957,24 @@ export default function App() {
 
   return (
     <div ref={appRef} className={`app${glitching ? ' glitch' : ''}${headerHidden ? ' header-hidden' : ''}`}>
+      <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
+
       <header ref={headerRef} className="top">
-        <div>
-          <h1>Monika <span className="badge" title="This is AI">AI</span></h1>
-          <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
+        <button type="button" className="iconbtn" onClick={openDrawer} aria-label="Open menu" aria-expanded={showDrawer}>
+          <MenuIcon />
+        </button>
+        <div className="brand">
+          <h1>Monika</h1>
+          <span className="badge" title="This is AI">AI</span>
+          {apiKey ? (
+            <span className="dot" role="img" aria-label="Online" title="Online" />
+          ) : (
+            <button type="button" className="keyhint" onClick={() => setShowSettings(true)}>Add API key</button>
+          )}
         </div>
-        <div className="actions">
-          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
-          <button className="ghost small" onClick={openChatList}>Chats</button>
-          <button className="ghost small" onClick={newChat}>New chat</button>
-          <button className="ghost small" onClick={() => fileRef.current?.click()}>Import</button>
-          <button className="ghost small" onClick={exportChat}>Export</button>
-          <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
-        </div>
+        <button type="button" className="iconbtn plus" onClick={newChat} aria-label="New chat" title="New chat">
+          <PlusIcon />
+        </button>
       </header>
 
       <main
@@ -921,7 +995,9 @@ export default function App() {
             <div key={i} className={`msg ${m.role}${isEditing ? ' editing' : ''}`}>
               {!isUser && <span className="name">Monika</span>}
               {m.image && (
-                <img className="pic" src={`data:${m.image.mime};base64,${m.image.data}`} alt="Attached by the user" />
+                <button type="button" className="picbtn" onClick={() => openViewer(i)} aria-label="View image full size">
+                  <img className="pic" src={`data:${m.image.mime};base64,${m.image.data}`} alt="Attached by the user" />
+                </button>
               )}
               {m.hadImage && !m.image && !m.imgId && <span className="imgnote">[image not kept after reload]</span>}
               {isEditing ? (
@@ -994,48 +1070,50 @@ export default function App() {
         <div ref={endRef} />
       </main>
 
-      <footer className="composer-wrap">
+      <footer ref={barRef} className="composer-wrap">
         {pending && (
           <div className="pending">
-            <img src={`data:${pending.mime};base64,${pending.data}`} alt="Preview of the attached image" />
-            <button type="button" className="ghost small" onClick={() => setPending(null)}>Remove</button>
-          </div>
-        )}
-        <div className="composer">
-          <div className="field">
-            <textarea
-              ref={taRef}
-              rows={1}
-              value={input}
-              placeholder="Say something to Monika"
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKeyDown}
-            />
-            <input
-              ref={imgRef}
-              type="file"
-              accept=".webp,.png,.jpg,.jpeg,image/webp,image/png,image/jpeg"
-              hidden
-              onChange={pickImage}
-            />
-            <button
-              type="button"
-              className="icon"
-              onClick={() => imgRef.current?.click()}
-              aria-label="Attach image"
-              title="Attach image (WEBP, PNG, JPG, JPEG)"
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="18" height="18" rx="3" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
-              </svg>
+            <button type="button" className="thumb" onClick={openPendingViewer} aria-label="Preview attached image">
+              <img src={`data:${pending.mime};base64,${pending.data}`} alt="" />
+            </button>
+            <button type="button" className="iconbtn x" onClick={() => setPending(null)} aria-label="Remove image">
+              <CloseIcon />
             </button>
           </div>
+        )}
+        <div className="bar">
+          <input
+            ref={imgRef}
+            type="file"
+            accept=".webp,.png,.jpg,.jpeg,image/webp,image/png,image/jpeg"
+            hidden
+            onChange={pickImage}
+          />
+          <button
+            type="button"
+            className="iconbtn attach"
+            onClick={() => imgRef.current?.click()}
+            aria-label="Attach image"
+            title="Attach image (WEBP, PNG, JPG, JPEG)"
+          >
+            <ImageIcon />
+          </button>
+          <textarea
+            ref={taRef}
+            rows={1}
+            value={input}
+            placeholder="Say something to Monika"
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+          />
           {loading ? (
-            <button type="button" className="ghost stop" onClick={stop} aria-label="Stop generating">Stop</button>
+            <button type="button" className="sendbtn stop" onClick={stop} aria-label="Stop generating" title="Stop">
+              <StopIcon />
+            </button>
           ) : (
-            <button onClick={send} disabled={!input.trim() && !pending}>Send</button>
+            <button type="button" className="sendbtn" onClick={send} disabled={!input.trim() && !pending} aria-label="Send" title="Send">
+              <SendIcon />
+            </button>
           )}
         </div>
         <p className={`disclaimer${disclaimerHidden ? ' hidden' : ''}`}>This is an AI, all content is fictional and shouldn't be taken seriously.</p>
@@ -1075,49 +1153,95 @@ export default function App() {
         </div>
       )}
 
-      {showChats && (
-        <div className="overlay" role="presentation" onClick={() => setShowChats(false)}>
-          <div
-            ref={modalRef}
-            className="modal chats"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="chats-title"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={onModalKeyDown}
-          >
-            <h2 id="chats-title">Chats</h2>
-            <ul className="chatlist">
-              {[...chats].sort((a, b) => b.updated - a.updated).map((c) => {
-                const active = c.id === activeId
-                const empty = c.msgs <= 1 && !c.imgs
-                return (
-                  <li key={c.id} className={active ? 'active' : ''}>
-                    <button type="button" className="chatopen" onClick={() => openChat(c.id)} aria-current={active ? 'true' : undefined}>
-                      <span className="chattitle"><span className="ttext">{c.title}</span>{active && <span className="now">Current</span>}</span>
-                      <span className="chatmeta">
-                        {empty ? 'No messages yet' : `${c.msgs} ${c.msgs === 1 ? 'message' : 'messages'}`}
-                        {c.imgs > 0 && ` · ${c.imgs} ${c.imgs === 1 ? 'image' : 'images'}`}
-                        {!empty && c.updated ? ` · ${formatWhen(c.updated)}` : ''}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost small danger"
-                      onClick={() => deleteChat(c.id)}
-                      aria-label={`Delete chat ${c.title}`}
-                    >
-                      Delete
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-            <div className="row">
-              <button type="button" className="ghost" onClick={() => setShowChats(false)}>Close</button>
-              <button type="button" onClick={newChat}>New chat</button>
-            </div>
+      <div className={`drawer-root${showDrawer ? ' open' : ''}`}>
+        <div className="scrim" onClick={() => setShowDrawer(false)} />
+        <aside
+          ref={drawerRef}
+          className="drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menu"
+          aria-hidden={!showDrawer}
+          onKeyDown={onDrawerKeyDown}
+        >
+          <div className="drawer-head">
+            <h2>Chats</h2>
+            <button type="button" className="iconbtn" onClick={() => setShowDrawer(false)} aria-label="Close menu">
+              <CloseIcon />
+            </button>
           </div>
+          <button type="button" className="newchat" onClick={newChat}>
+            <PlusIcon /> New chat
+          </button>
+          <ul className="chatlist">
+            {[...chats].sort((a, b) => b.updated - a.updated).map((c) => {
+              const active = c.id === activeId
+              const empty = c.msgs <= 1 && !c.imgs
+              return (
+                <li key={c.id} className={active ? 'active' : ''}>
+                  <button type="button" className="chatopen" onClick={() => openChat(c.id)} aria-current={active ? 'true' : undefined}>
+                    <span className="chattitle">
+                      <span className="ttext">{c.title}</span>
+                      {active && <span className="now">Current</span>}
+                    </span>
+                    <span className="chatmeta">
+                      {empty ? 'No messages yet' : `${c.msgs} ${c.msgs === 1 ? 'message' : 'messages'}`}
+                      {c.imgs > 0 && ` · ${c.imgs} ${c.imgs === 1 ? 'image' : 'images'}`}
+                      {!empty && c.updated ? ` · ${formatWhen(c.updated)}` : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="iconbtn del"
+                    onClick={() => deleteChat(c.id)}
+                    aria-label={`Delete chat ${c.title}`}
+                    title="Delete"
+                  >
+                    <TrashIcon />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          <div className="drawer-foot">
+            <button type="button" className="menuitem" onClick={() => fileRef.current?.click()}>
+              <ImportIcon /> Import chat
+            </button>
+            <button type="button" className="menuitem" onClick={() => { setShowDrawer(false); exportChat() }}>
+              <ExportIcon /> Export chat
+            </button>
+            <button type="button" className="menuitem" onClick={() => { setShowDrawer(false); setShowSettings(true) }}>
+              <KeyIcon /> API key
+            </button>
+          </div>
+        </aside>
+      </div>
+
+      {viewer && (
+        <div
+          ref={viewerRef}
+          className="lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image viewer"
+          onClick={closeViewer}
+          onKeyDown={onViewerKeyDown}
+        >
+          <button type="button" className="lb-btn lb-close" onClick={(e) => { e.stopPropagation(); closeViewer() }} aria-label="Close viewer">
+            <CloseIcon />
+          </button>
+          {viewer.items.length > 1 && (
+            <>
+              <button type="button" className="lb-btn lb-prev" onClick={(e) => { e.stopPropagation(); stepViewer(-1) }} aria-label="Previous image">
+                <ChevronIcon dir="left" />
+              </button>
+              <button type="button" className="lb-btn lb-next" onClick={(e) => { e.stopPropagation(); stepViewer(1) }} aria-label="Next image">
+                <ChevronIcon dir="right" />
+              </button>
+              <span className="lb-count" aria-live="polite">{viewer.i + 1} / {viewer.items.length}</span>
+            </>
+          )}
+          <img src={viewer.items[viewer.i].src} alt="Full size attachment" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </div>
