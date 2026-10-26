@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { delMany, getMany, keys, set } from 'idb-keyval'
 
 const DEFAULT_MODEL = 'gemini-3.5-flash-lite'
-const CHAT_KEY = 'monika_chat'
+const CHAT_KEY = 'monika_chat' // legacy single-chat key, migrated on first run
+const INDEX_KEY = 'monika_chats'
+const ACTIVE_KEY = 'monika_active_chat'
+const CHAT_PREFIX = 'monika_chat:'
 const MAX_CONTEXT = 40 // messages sent to Gemini per request
 const MAX_STORED = 200 // messages kept in state and localStorage
 const MAX_OUTPUT_TOKENS = 8192 // thinking tokens count toward this on 2.5/3.x models
@@ -118,34 +122,151 @@ const sanitizeMessages = (raw) => {
     .filter(
       (m) =>
         m && (m.role === 'user' || m.role === 'monika') && typeof m.text === 'string' &&
-        (m.text.trim() || m.image || m.hadImage)
+        (m.text.trim() || m.image || m.hadImage || m.imgId)
     )
     .slice(-MAX_STORED)
     .map((m) => {
       const actions = Array.isArray(m.actions) ? m.actions.filter((a) => ACTION_NAMES.includes(a)) : []
       const out = { role: m.role, text: m.text }
       if (actions.length) out.actions = actions
-      if (isImageData(m.image)) out.image = { mime: normMime(m.image.mime), data: m.image.data }
+      if (isImageData(m.image)) {
+        out.image = { mime: normMime(m.image.mime), data: m.image.data }
+        if (isImgId(m.imgId)) out.imgId = m.imgId
+      } else if (isImgId(m.imgId)) out.imgId = m.imgId
       else if (m.image || m.hadImage) out.hadImage = true
       return out
     })
   return clean.length ? clean : null
 }
 
-const loadMessages = () => {
+const readChat = (id) => {
   try {
-    return sanitizeMessages(JSON.parse(load(CHAT_KEY, 'null'))) || DEFAULT_MESSAGES
+    return sanitizeMessages(JSON.parse(load(CHAT_PREFIX + id, 'null'))) || DEFAULT_MESSAGES
   } catch {
     return DEFAULT_MESSAGES
   }
 }
 
-// Image pixels are too big for localStorage: only a flag is kept across reloads.
-const persistMessages = (messages) => {
-  const toStore = trim(messages.filter((m) => m.text || m.image || m.hadImage))
-    .map(({ image, ...rest }) => (image ? { ...rest, hadImage: true } : rest))
-  save(CHAT_KEY, JSON.stringify(toStore))
+// Image pixels are too big for localStorage: text lives there, pixels live in IndexedDB
+// (idb-keyval) under "img:<imgId>", and each message just carries its imgId.
+const IMG_PREFIX = 'img:'
+const isImgId = (v) => typeof v === 'string' && /^[\w-]{1,64}$/.test(v)
+const newImgId = () =>
+  (globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
+const storedImgs = new Set() // ids already known to be in IndexedDB this session
+
+const storeImage = async (id, image) => {
+  if (!isImgId(id) || !isImageData(image) || storedImgs.has(id)) return
+  try {
+    await set(IMG_PREFIX + id, { mime: image.mime, data: image.data })
+    storedImgs.add(id)
+  } catch { /* IndexedDB unavailable or full: the image just won't survive a reload */ }
 }
+
+const pruneImages = async (liveIds) => {
+  try {
+    const stale = (await keys()).filter((k) => typeof k === 'string' && k.startsWith(IMG_PREFIX) && !liveIds.has(k.slice(IMG_PREFIX.length)))
+    if (stale.length) await delMany(stale)
+    stale.forEach((k) => storedImgs.delete(k.slice(IMG_PREFIX.length)))
+  } catch { /* ignore */ }
+}
+
+const newChatId = () => newImgId()
+const isEmptyChat = (msgs) => !msgs.some((m) => m.role === 'user')
+const chatTitle = (msgs) => {
+  const first = msgs.find((m) => m.role === 'user' && m.text.trim())
+  if (first) {
+    const t = first.text.replace(/\s+/g, ' ').trim()
+    return t.length > 48 ? `${t.slice(0, 47)}…` : t
+  }
+  return msgs.some((m) => m.role === 'user') ? 'Image chat' : 'New chat'
+}
+
+const readIndex = () => {
+  try {
+    const raw = JSON.parse(load(INDEX_KEY, '[]'))
+    if (!Array.isArray(raw)) return []
+    return raw
+      .filter((c) => c && isImgId(c.id))
+      .map((c) => ({
+        id: c.id,
+        title: typeof c.title === 'string' ? c.title : 'New chat',
+        updated: Number(c.updated) || 0,
+        msgs: Number(c.msgs) || 0,
+        imgs: Number(c.imgs) || 0,
+        imgIds: Array.isArray(c.imgIds) ? c.imgIds.filter(isImgId) : [],
+      }))
+  } catch {
+    return []
+  }
+}
+const writeIndex = (idx) => save(INDEX_KEY, JSON.stringify(idx))
+const liveImgIds = (idx) => new Set(idx.flatMap((c) => c.imgIds))
+
+// Writes one chat (text to localStorage, pixels to IndexedDB) and refreshes its index entry.
+// Returns the up-to-date index. Does nothing for a chat that no longer exists or didn't change.
+const persistChat = (id, messages) => {
+  const idx = readIndex()
+  const i = idx.findIndex((c) => c.id === id)
+  if (i < 0) return idx
+  const kept = trim(messages.filter((m) => m.text || m.image || m.hadImage || m.imgId))
+  const ids = new Set()
+  let imgs = 0
+  const toStore = kept.map(({ image, ...rest }) => {
+    if (rest.imgId) {
+      ids.add(rest.imgId)
+      imgs++
+      if (image) storeImage(rest.imgId, image)
+      return rest
+    }
+    if (image || rest.hadImage) imgs++
+    return image ? { ...rest, hadImage: true } : rest
+  })
+  const json = JSON.stringify(toStore)
+  if (load(CHAT_PREFIX + id) === json) return idx
+  save(CHAT_PREFIX + id, json)
+  idx[i] = { ...idx[i], title: chatTitle(kept), updated: Date.now(), msgs: kept.length, imgs, imgIds: [...ids] }
+  writeIndex(idx)
+  pruneImages(liveImgIds(idx))
+  return idx
+}
+
+// Adds an (empty-indexed) chat and fills it with `messages`.
+const createChat = (messages = DEFAULT_MESSAGES) => {
+  const id = newChatId()
+  const idx = readIndex()
+  idx.push({ id, title: 'New chat', updated: Date.now(), msgs: 0, imgs: 0, imgIds: [] })
+  writeIndex(idx)
+  return { id, index: persistChat(id, messages) }
+}
+
+const removeChat = (id) => {
+  save(CHAT_PREFIX + id, '')
+  const idx = readIndex().filter((c) => c.id !== id)
+  writeIndex(idx)
+  pruneImages(liveImgIds(idx))
+  return idx
+}
+
+// First run: migrate the old single chat, then pick the chat to open.
+const initChats = () => {
+  let idx = readIndex()
+  if (!idx.length) {
+    let legacy = null
+    try { legacy = sanitizeMessages(JSON.parse(load(CHAT_KEY, 'null'))) } catch { /* ignore */ }
+    const made = createChat(legacy || DEFAULT_MESSAGES)
+    save(CHAT_KEY, '')
+    idx = made.index
+    save(ACTIVE_KEY, made.id)
+    return { index: idx, activeId: made.id, messages: legacy || DEFAULT_MESSAGES }
+  }
+  const saved = load(ACTIVE_KEY)
+  const active = idx.find((c) => c.id === saved) || [...idx].sort((a, b) => b.updated - a.updated)[0]
+  return { index: idx, activeId: active.id, messages: readChat(active.id) }
+}
+
+const formatWhen = (t) =>
+  t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 
 // RP formatting: *action* renders as italic, anywhere in a message. The raw text is stored untouched.
 // While streaming, an action that hasn't been closed yet is already shown in italic.
@@ -182,7 +303,7 @@ function buildContents(history) {
   return recent.map((m, i) => {
     const parts = []
     if (withPixels.has(i)) parts.push({ inlineData: { mimeType: m.image.mime, data: m.image.data } })
-    const note = (m.image || m.hadImage) && !withPixels.has(i) ? ' (sent an image)' : ''
+    const note = (m.image || m.hadImage || m.imgId) && !withPixels.has(i) ? ' (sent an image)' : ''
     // Her past action tags go back to her, so she remembers what she did.
     const text = m.text + note + (m.actions || []).map((a) => ` [[${a}]]`).join('')
     if (text.trim()) parts.push({ text })
@@ -321,7 +442,11 @@ export default function App() {
   const [apiKey, setApiKey] = useState(() => load('gemini_api_key'))
   const [model, setModel] = useState(() => load('gemini_model', DEFAULT_MODEL))
   const [showSettings, setShowSettings] = useState(false)
-  const [messages, setMessages] = useState(loadMessages)
+  const [boot] = useState(initChats)
+  const [messages, setMessages] = useState(boot.messages)
+  const [chats, setChats] = useState(boot.index)
+  const [activeId, setActiveId] = useState(boot.activeId)
+  const [showChats, setShowChats] = useState(false)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -335,6 +460,8 @@ export default function App() {
   const saveTimer = useRef(null)
   const copyTimer = useRef(null)
   const messagesRef = useRef(messages)
+  const activeIdRef = useRef(boot.activeId)
+  const instantRef = useRef(false)
   const modalRef = useRef(null)
   const lastFocusRef = useRef(null)
   // Intentionally not persisted: the system prompt promises it only for "this visit."
@@ -376,20 +503,28 @@ export default function App() {
   // when the reader has scrolled up.
   useEffect(() => {
     if (loading && !stickRef.current) return
-    endRef.current?.scrollIntoView({ behavior: loading ? 'auto' : 'smooth' })
+    endRef.current?.scrollIntoView({ behavior: loading || instantRef.current ? 'auto' : 'smooth' })
+    instantRef.current = false
   }, [messages, loading, error])
+
+  const flushChat = () => {
+    clearTimeout(saveTimer.current)
+    const idx = persistChat(activeIdRef.current, messagesRef.current)
+    setChats(idx)
+    return idx
+  }
 
   useEffect(() => {
     messagesRef.current = messages
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => persistMessages(messages), SAVE_DELAY)
+    saveTimer.current = setTimeout(flushChat, SAVE_DELAY)
   }, [messages])
 
   // Flush the debounced save when the page is hidden or closed.
   useEffect(() => {
     const flush = () => {
       clearTimeout(saveTimer.current)
-      persistMessages(messagesRef.current)
+      persistChat(activeIdRef.current, messagesRef.current)
     }
     const onVisibility = () => { if (document.visibilityState === 'hidden') flush() }
     window.addEventListener('pagehide', flush)
@@ -409,6 +544,29 @@ export default function App() {
     el.style.height = `${h}px`
     el.style.overflowY = el.scrollHeight + border > 140 ? 'auto' : 'hidden'
   }, [input])
+
+  // Bring saved images back from IndexedDB (after a reload or when opening a chat).
+  const hydrateImages = async (msgs, chatId) => {
+    const ids = [...new Set(msgs.filter((m) => m.imgId && !m.image).map((m) => m.imgId))]
+    if (!ids.length) return
+    let found = []
+    try { found = await getMany(ids.map((id) => IMG_PREFIX + id)) } catch { /* ignore */ }
+    if (activeIdRef.current !== chatId) return
+    const byId = new Map()
+    ids.forEach((id, i) => { if (isImageData(found[i])) byId.set(id, found[i]) })
+    byId.forEach((_, id) => storedImgs.add(id))
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (!m.imgId || m.image) return m
+        const img = byId.get(m.imgId)
+        if (img) return { ...m, image: { mime: normMime(img.mime), data: img.data } }
+        const { imgId, ...rest } = m
+        return { ...rest, hadImage: true } // pixels are gone: show the "not kept" note
+      })
+    )
+  }
+
+  useEffect(() => { hydrateImages(messagesRef.current, activeIdRef.current) }, [])
 
   // Header floats over the log, so the log reserves exactly the header's height.
   useEffect(() => {
@@ -435,16 +593,17 @@ export default function App() {
 
   // Settings dialog: focus the first field, give focus back on close.
   useEffect(() => {
-    if (!showSettings) return
+    if (!showSettings && !showChats) return
     lastFocusRef.current = document.activeElement
-    modalRef.current?.querySelector('input')?.focus()
+    modalRef.current?.querySelector('input, button')?.focus()
     return () => lastFocusRef.current?.focus?.()
-  }, [showSettings])
+  }, [showSettings, showChats])
 
   const onModalKeyDown = (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation()
       setShowSettings(false)
+      setShowChats(false)
       return
     }
     if (e.key !== 'Tab') return
@@ -475,6 +634,7 @@ export default function App() {
         history,
         signal: ctrl.signal,
         onText: (t) => {
+          if (ctrl.signal.aborted) return
           partial = cleanText(t, true)
           setMessages([...history, { role: 'monika', text: partial }])
         },
@@ -511,7 +671,13 @@ export default function App() {
     if (!apiKey) { setShowSettings(true); return }
     setInput('')
     setPending(null)
-    generate([...messages, pending ? { role: 'user', text, image: pending } : { role: 'user', text }])
+    let msg = { role: 'user', text }
+    if (pending) {
+      const imgId = newImgId()
+      storeImage(imgId, pending)
+      msg = { ...msg, image: pending, imgId }
+    }
+    generate([...messages, msg])
   }
 
   const pickImage = async (e) => {
@@ -555,7 +721,7 @@ export default function App() {
     const { index, text } = editing
     const orig = messages[index]
     const t = text.trim()
-    if (!t && !orig.image && !orig.hadImage) return
+    if (!t && !orig.image && !orig.hadImage && !orig.imgId) return
     if (!confirmCut(messages.length - index - 2)) return
     setEditing(null)
     generate([...messages.slice(0, index), { ...orig, text: t }])
@@ -588,21 +754,89 @@ export default function App() {
     copyTimer.current = setTimeout(() => setCopied(null), 1500)
   }
 
-  const clearChat = () => {
-    if (!window.confirm('Clear this conversation?')) return
+  // Drops any in-flight reply and per-chat UI state before another chat takes over.
+  const resetForSwitch = () => {
     abortRef.current?.abort()
     abortRef.current = null
     setLoading(false)
     setError('')
     setEditing(null)
-    setDisclaimerHidden(false)
-    setGlitching(false)
     setPending(null)
-    setMessages(DEFAULT_MESSAGES)
+    setGlitching(false)
+  }
+
+  const openLoaded = (id, msgs) => {
+    activeIdRef.current = id
+    messagesRef.current = msgs
+    instantRef.current = true
+    stickRef.current = true
+    save(ACTIVE_KEY, id)
+    setActiveId(id)
+    setMessages(msgs)
+    hydrateImages(msgs, id)
+  }
+
+  // Leaving an untouched chat discards it, so "New chat" never piles up empty ones.
+  const leaveCurrent = () => {
+    resetForSwitch()
+    flushChat()
+    const leaving = activeIdRef.current
+    if (isEmptyChat(messagesRef.current)) setChats(removeChat(leaving))
+  }
+
+  const openChat = (id) => {
+    if (id === activeIdRef.current) { setShowChats(false); return }
+    leaveCurrent()
+    openLoaded(id, readChat(id))
+    setChats(readIndex())
+    setShowChats(false)
+  }
+
+  const newChat = () => {
+    setShowChats(false)
+    if (isEmptyChat(messagesRef.current)) { taRef.current?.focus(); return }
+    leaveCurrent()
+    const made = createChat()
+    setChats(made.index)
+    openLoaded(made.id, DEFAULT_MESSAGES)
+    setDisclaimerHidden(false)
+  }
+
+  const deleteChat = (id) => {
+    const c = chats.find((x) => x.id === id)
+    const label = c ? `"${c.title}"` : 'this chat'
+    if (!window.confirm(`Delete ${label}? This can't be undone.`)) return
+    if (id !== activeIdRef.current) {
+      flushChat()
+      setChats(removeChat(id))
+      return
+    }
+    resetForSwitch()
+    clearTimeout(saveTimer.current)
+    let idx = removeChat(id)
+    let next = [...idx].sort((a, b) => b.updated - a.updated)[0]
+    if (!next) {
+      const made = createChat()
+      idx = made.index
+      next = idx.find((x) => x.id === made.id)
+    }
+    setChats(idx)
+    openLoaded(next.id, readChat(next.id))
+  }
+
+  const openChatList = () => {
+    flushChat()
+    setShowChats(true)
   }
 
   const exportChat = () => {
-    const data = JSON.stringify(messages.filter((m) => m.text || m.image || m.hadImage), null, 2)
+    const data = JSON.stringify(
+      messages
+        .filter((m) => m.text || m.image || m.hadImage || m.imgId)
+        .map(({ imgId, ...m }) => (imgId && !m.image ? { ...m, hadImage: true } : m)),
+      null,
+      2
+    )
     const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
     const a = document.createElement('a')
     a.href = url
@@ -618,17 +852,18 @@ export default function App() {
     try {
       if (file.size > 40 * 1024 * 1024) throw new Error('File is too large.')
       const raw = JSON.parse(await file.text())
-      const imported = sanitizeMessages(raw)
-      if (!imported) throw new Error('No valid messages found.')
-      const truncated = Array.isArray(raw) && raw.length > MAX_STORED
-      const note = truncated ? `\n\nOnly the most recent ${MAX_STORED} messages will be kept.` : ''
-      if (!window.confirm(`Replace this conversation with ${imported.length} imported messages?${note}`)) return
-      abortRef.current?.abort()
-      abortRef.current = null
-      setLoading(false)
-      setError('')
-      setEditing(null)
-      setMessages(imported)
+      const parsed = sanitizeMessages(raw)
+      if (!parsed) throw new Error('No valid messages found.')
+      const imported = parsed.map(({ imgId, ...m }) => {
+        if (!m.image) return imgId ? { ...m, hadImage: true } : m
+        const id = newImgId()
+        storeImage(id, m.image)
+        return { ...m, imgId: id }
+      })
+      leaveCurrent()
+      const made = createChat(imported)
+      setChats(made.index)
+      openLoaded(made.id, imported)
     } catch (err) {
       setError(`Import failed: ${err.message}`)
     }
@@ -660,9 +895,10 @@ export default function App() {
         </div>
         <div className="actions">
           <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
+          <button className="ghost small" onClick={openChatList}>Chats</button>
+          <button className="ghost small" onClick={newChat}>New chat</button>
           <button className="ghost small" onClick={() => fileRef.current?.click()}>Import</button>
           <button className="ghost small" onClick={exportChat}>Export</button>
-          <button className="ghost small" onClick={clearChat}>Clear</button>
           <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
         </div>
       </header>
@@ -680,14 +916,14 @@ export default function App() {
           const isUser = m.role === 'user'
           const isStreaming = loading && i === messages.length - 1 && !isUser
           const isEditing = editing?.index === i
-          const hasContent = !!(m.text || m.image || m.hadImage)
+          const hasContent = !!(m.text || m.image || m.hadImage || m.imgId)
           return (
             <div key={i} className={`msg ${m.role}${isEditing ? ' editing' : ''}`}>
               {!isUser && <span className="name">Monika</span>}
               {m.image && (
                 <img className="pic" src={`data:${m.image.mime};base64,${m.image.data}`} alt="Attached by the user" />
               )}
-              {m.hadImage && !m.image && <span className="imgnote">[image not kept after reload]</span>}
+              {m.hadImage && !m.image && !m.imgId && <span className="imgnote">[image not kept after reload]</span>}
               {isEditing ? (
                 <div className="editbox">
                   <textarea
@@ -705,7 +941,7 @@ export default function App() {
                       type="button"
                       className="small"
                       onClick={submitEdit}
-                      disabled={!editing.text.trim() && !messages[i].image && !messages[i].hadImage}
+                      disabled={!editing.text.trim() && !messages[i].image && !messages[i].hadImage && !messages[i].imgId}
                     >
                       Save & resend
                     </button>
@@ -836,6 +1072,52 @@ export default function App() {
               <button type="submit">Save</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {showChats && (
+        <div className="overlay" role="presentation" onClick={() => setShowChats(false)}>
+          <div
+            ref={modalRef}
+            className="modal chats"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chats-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={onModalKeyDown}
+          >
+            <h2 id="chats-title">Chats</h2>
+            <ul className="chatlist">
+              {[...chats].sort((a, b) => b.updated - a.updated).map((c) => {
+                const active = c.id === activeId
+                const empty = c.msgs <= 1 && !c.imgs
+                return (
+                  <li key={c.id} className={active ? 'active' : ''}>
+                    <button type="button" className="chatopen" onClick={() => openChat(c.id)} aria-current={active ? 'true' : undefined}>
+                      <span className="chattitle"><span className="ttext">{c.title}</span>{active && <span className="now">Current</span>}</span>
+                      <span className="chatmeta">
+                        {empty ? 'No messages yet' : `${c.msgs} ${c.msgs === 1 ? 'message' : 'messages'}`}
+                        {c.imgs > 0 && ` · ${c.imgs} ${c.imgs === 1 ? 'image' : 'images'}`}
+                        {!empty && c.updated ? ` · ${formatWhen(c.updated)}` : ''}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost small danger"
+                      onClick={() => deleteChat(c.id)}
+                      aria-label={`Delete chat ${c.title}`}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            <div className="row">
+              <button type="button" className="ghost" onClick={() => setShowChats(false)}>Close</button>
+              <button type="button" onClick={newChat}>New chat</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
