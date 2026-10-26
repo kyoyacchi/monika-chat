@@ -343,6 +343,8 @@ export default function App() {
   const [headerHidden, setHeaderHidden] = useState(false)
   const glitchTimer = useRef(null)
   const headerTimer = useRef(null)
+  const appRef = useRef(null)
+  const headerRef = useRef(null)
   const fileRef = useRef(null)
   const imgRef = useRef(null)
   const [pending, setPending] = useState(null) // image waiting to be sent
@@ -407,6 +409,22 @@ export default function App() {
     el.style.height = `${h}px`
     el.style.overflowY = el.scrollHeight + border > 140 ? 'auto' : 'hidden'
   }, [input])
+
+  // Header floats over the log, so the log reserves exactly the header's height.
+  useEffect(() => {
+    const app = appRef.current
+    const head = headerRef.current
+    if (!app || !head) return
+    const sync = () => app.style.setProperty('--top-h', `${head.offsetHeight}px`)
+    sync()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', sync)
+      return () => window.removeEventListener('resize', sync)
+    }
+    const ro = new ResizeObserver(sync)
+    ro.observe(head)
+    return () => ro.disconnect()
+  }, [])
 
   useEffect(() => () => {
     abortRef.current?.abort()
@@ -634,8 +652,8 @@ export default function App() {
   const lastIsUser = messages[messages.length - 1]?.role === 'user'
 
   return (
-    <div className={`app${glitching ? ' glitch' : ''}${headerHidden ? ' header-hidden' : ''}`}>
-      <header className="top">
+    <div ref={appRef} className={`app${glitching ? ' glitch' : ''}${headerHidden ? ' header-hidden' : ''}`}>
+      <header ref={headerRef} className="top">
         <div>
           <h1>Monika <span className="badge" title="This is AI">AI</span></h1>
           <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
@@ -693,6 +711,10 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+              ) : isStreaming && !hasContent ? (
+                <p className="typing" role="status" aria-label="Monika is typing">
+                  <span /><span /><span />
+                </p>
               ) : (
                 hasContent && (
                   <>
@@ -725,14 +747,6 @@ export default function App() {
             </div>
           )
         })}
-        {loading && messages[messages.length - 1]?.role === 'user' && (
-          <div className="msg monika">
-            <span className="name">Monika</span>
-            <p className="typing" aria-label="Monika is typing">
-              <span /><span /><span />
-            </p>
-          </div>
-        )}
         {error && (
           <div className="error" role="alert">
             <span>{error}</span>
