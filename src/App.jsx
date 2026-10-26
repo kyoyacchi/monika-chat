@@ -340,7 +340,9 @@ export default function App() {
   // Intentionally not persisted: the system prompt promises it only for "this visit."
   const [disclaimerHidden, setDisclaimerHidden] = useState(false)
   const [glitching, setGlitching] = useState(false)
+  const [headerHidden, setHeaderHidden] = useState(false)
   const glitchTimer = useRef(null)
+  const headerTimer = useRef(null)
   const fileRef = useRef(null)
   const imgRef = useRef(null)
   const [pending, setPending] = useState(null) // image waiting to be sent
@@ -362,6 +364,10 @@ export default function App() {
   const onLogScroll = (e) => {
     const el = e.currentTarget
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    // Auto-hide header while scrolling; show again shortly after scrolling stops
+    setHeaderHidden(true)
+    clearTimeout(headerTimer.current)
+    headerTimer.current = setTimeout(() => setHeaderHidden(false), 280)
   }
 
   // Instant scroll while streaming (smooth fights the growing text), and none at all
@@ -406,6 +412,7 @@ export default function App() {
     abortRef.current?.abort()
     clearTimeout(glitchTimer.current)
     clearTimeout(copyTimer.current)
+    clearTimeout(headerTimer.current)
   }, [])
 
   // Settings dialog: focus the first field, give focus back on close.
@@ -627,31 +634,30 @@ export default function App() {
   const lastIsUser = messages[messages.length - 1]?.role === 'user'
 
   return (
-    <div className={`app${glitching ? ' glitch' : ''}`}>
-      <div
+    <div className={`app${glitching ? ' glitch' : ''}${headerHidden ? ' header-hidden' : ''}`}>
+      <header className="top">
+        <div>
+          <h1>Monika <span className="badge" title="This is AI">AI</span></h1>
+          <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
+        </div>
+        <div className="actions">
+          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
+          <button className="ghost small" onClick={() => fileRef.current?.click()}>Import</button>
+          <button className="ghost small" onClick={exportChat}>Export</button>
+          <button className="ghost small" onClick={clearChat}>Clear</button>
+          <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
+        </div>
+      </header>
+
+      <main
         ref={logRef}
-        className="scroll"
+        className="log"
         role="log"
         aria-live="polite"
         aria-relevant="additions text"
         aria-busy={loading}
         onScroll={onLogScroll}
       >
-        <header className="top">
-          <div>
-            <h1>Monika <span className="badge" title="This is AI">AI</span></h1>
-            <p>{apiKey ? 'Online' : 'Add a Gemini API key to start chatting'}</p>
-          </div>
-          <div className="actions">
-            <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importChat} />
-            <button className="ghost small" onClick={() => fileRef.current?.click()}>Import</button>
-            <button className="ghost small" onClick={exportChat}>Export</button>
-            <button className="ghost small" onClick={clearChat}>Clear</button>
-            <button className="ghost small" onClick={() => setShowSettings(true)}>API key</button>
-          </div>
-        </header>
-
-        <main className="log">
         {messages.map((m, i) => {
           const isUser = m.role === 'user'
           const isStreaming = loading && i === messages.length - 1 && !isUser
@@ -736,8 +742,7 @@ export default function App() {
           </div>
         )}
         <div ref={endRef} />
-        </main>
-      </div>
+      </main>
 
       <footer className="composer-wrap">
         {pending && (
