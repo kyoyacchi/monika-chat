@@ -597,6 +597,7 @@ button.ghost:hover:not(:disabled) {
 .overlay {
   position: fixed;
   inset: 0;
+  z-index: 40;
   background: rgba(40, 20, 30, 0.55);
   display: grid;
   place-items: center;
@@ -900,3 +901,9 @@ button.lb-next { right: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .drawer, .scrim, .lightbox, .lightbox img { transition: none; animation: none; }
 }
+
+/* Confirm popup */
+.modal.confirm { max-width: 360px; animation: lb-pop 0.18s ease; }
+.confirm-msg { margin: 0; color: var(--ink); line-height: 1.5; overflow-wrap: anywhere; }
+button.dangerfill { background: #c0392b; color: #fff; }
+@media (prefers-reduced-motion: reduce) { .modal.confirm { animation: none; } }
