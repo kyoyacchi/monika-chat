@@ -6,6 +6,11 @@
 
 A small, fast, bring-your-own-key chat app for roleplaying with Monika from *Doki Doki Literature Club*, powered by the Google Gemini API.
 
+### ⚠️ Caution
+
+WARNING: Visual Glitches & Flashing Lights
+This experience features flickering screens, rapid distortion, and strobe effects. If you are photosensitive or prone to seizures, please proceed with caution
+
 [**Live demo**](https://monika.kyokai.me) · [Report a bug](https://github.com/kyoyacchi/monika-chat/issues) · [Request a feature](https://github.com/kyoyacchi/monika-chat/issues)
 
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
