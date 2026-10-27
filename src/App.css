@@ -349,11 +349,6 @@ button.mini:hover:not(:disabled) {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.bar:focus-within {
-  border-color: var(--pink);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pink) 22%, transparent);
-}
-
 .composer-input {
   flex: 1;
   min-width: 0;
@@ -370,6 +365,12 @@ button.mini:hover:not(:disabled) {
   -webkit-user-select: text;
   user-select: text;
   -webkit-tap-highlight-color: transparent;
+}
+
+.composer-input:focus,
+.composer-input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .composer-input[data-empty="true"]::before {
