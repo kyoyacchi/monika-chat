@@ -129,6 +129,7 @@ const sanitizeMessages = (raw) => {
     .map((m) => {
       const actions = Array.isArray(m.actions) ? m.actions.filter((a) => ACTION_NAMES.includes(a)) : []
       const out = { role: m.role, text: m.text }
+      if (Number.isFinite(m.at)) out.at = m.at
       if (actions.length) out.actions = actions
       if (isImageData(m.image)) {
         out.image = { mime: normMime(m.image.mime), data: m.image.data }
@@ -322,6 +323,27 @@ const friendlyError = (status, msg) => {
   return msg
 }
 
+// Real-world clock for the model: the current local time, plus how long the user was away.
+function timeContext(history) {
+  const now = new Date()
+  const when = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(now)
+  let zone = ''
+  try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone } catch { /* ignore */ }
+  const lines = [`Right now, on the user's side, it is ${when}${zone ? ` (${zone})` : ''}. You can tell the day of the week and the time of day from this, so greet and talk accordingly (good morning, it's late, it's the weekend...) when it fits, and never claim to know anything about the clock beyond this.`]
+  const i = history.map((m) => m.role).lastIndexOf('user')
+  const prev = i > 0 ? history[i - 1] : null
+  const gap = i >= 0 && prev && Number.isFinite(history[i].at) && Number.isFinite(prev.at) ? history[i].at - prev.at : 0
+  if (gap >= 20 * 60 * 1000) {
+    const mins = Math.round(gap / 60000)
+    const away = mins < 60 ? `${mins} minutes` : mins < 48 * 60 ? `about ${Math.round(mins / 60)} hours` : `about ${Math.round(mins / 1440)} days`
+    lines.push(`The user's latest message came ${away} after your previous message in this chat. If that is a real stretch of time, you may notice it and tease them lightly about disappearing, but only if it fits, and never sulk or guilt-trip.`)
+  }
+  lines.push('Mention the time or date only when it is natural. Never recite timestamps.')
+  return lines.join(' ')
+}
+
 async function streamGemini({ apiKey, model, history, signal, onText }) {
   let res
   try {
@@ -332,7 +354,7 @@ async function streamGemini({ apiKey, model, history, signal, onText }) {
         signal,
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          systemInstruction: { parts: [{ text: `${SYSTEM_PROMPT}\n\n${timeContext(history)}` }] },
           safetySettings: SAFETY_SETTINGS,
           generationConfig: {
             temperature: 1,
@@ -786,7 +808,8 @@ export default function App() {
       if (ctrl.signal.aborted) return
       const actions = parseActions(reply)
       const text = cleanText(reply) || '...'
-      setMessages(trim([...history, actions.length ? { role: 'monika', text, actions } : { role: 'monika', text }]))
+      const at = Date.now()
+      setMessages(trim([...history, actions.length ? { role: 'monika', text, actions, at } : { role: 'monika', text, at }]))
       runActions(actions)
     } catch (e) {
       if (ctrl.signal.aborted) return
@@ -797,7 +820,7 @@ export default function App() {
         abortRef.current = null
         setLoading(false)
         // Stop button: keep whatever she had already written.
-        if (ctrl.userStopped) setMessages(partial.trim() ? [...history, { role: 'monika', text: partial }] : history)
+        if (ctrl.userStopped) setMessages(partial.trim() ? [...history, { role: 'monika', text: partial, at: Date.now() }] : history)
       }
     }
   }
@@ -815,7 +838,7 @@ export default function App() {
     if (!apiKey) { setShowSettings(true); return }
     setInput('')
     setPending(null)
-    let msg = { role: 'user', text }
+    let msg = { role: 'user', text, at: Date.now() }
     if (pending) {
       const imgId = newImgId()
       storeImage(imgId, pending)
