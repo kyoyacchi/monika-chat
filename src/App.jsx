@@ -453,6 +453,10 @@ function IconBtn({ label, onClick, disabled, children }) {
   )
 }
 
+// Phones and tablets: Enter inserts a new line and only the Send button sends.
+const isTouchKeyboard = () =>
+  typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none) and (pointer: coarse)').matches
+
 // Text of the contenteditable composer, minus the stray trailing newline browsers add.
 const readComposer = (el) => el.innerText.replace(/\u00a0/g, ' ').replace(/\n$/, '')
 
@@ -875,7 +879,7 @@ export default function App() {
 
   const onEditKeyDown = (e) => {
     if (e.key === 'Escape') setEditing(null)
-    else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submitEdit() }
+    else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !isTouchKeyboard()) { e.preventDefault(); submitEdit() }
   }
 
   const copyMessage = async (index, text) => {
@@ -1022,7 +1026,7 @@ export default function App() {
   }
 
   const onKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !isTouchKeyboard()) { e.preventDefault(); send() }
   }
 
   const saveSettings = (e) => {
@@ -1191,7 +1195,7 @@ export default function App() {
             aria-label="Message"
             data-placeholder="Say something to Monika"
             data-empty={!input}
-            enterKeyHint="send"
+            enterKeyHint="enter"
             spellCheck
             onInput={(e) => setInput(readComposer(e.currentTarget))}
             onKeyDown={onKeyDown}
