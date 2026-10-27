@@ -124,6 +124,36 @@ button.keyhint {
   white-space: nowrap;
 }
 
+/* Mode toggle (soft / Act 3) */
+button.modebtn {
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--green);
+  border: 1.5px solid color-mix(in srgb, var(--green) 55%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+button.modebtn:hover:not(:disabled) {
+  background: var(--green-soft);
+  filter: none;
+}
+
+button.modebtn.on {
+  background: var(--pink);
+  color: #fff;
+  border-color: var(--pink);
+  box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--pink) 70%, transparent);
+}
+
+button.modebtn.on:hover:not(:disabled) {
+  background: var(--pink);
+  filter: brightness(1.06);
+}
+
 /* Round icon buttons (menu, plus, close, delete, attach) */
 button.iconbtn {
   width: 40px;
@@ -162,6 +192,7 @@ button.iconbtn.plus:hover:not(:disabled) {
   color: var(--green);
   letter-spacing: -0.02em;
   line-height: 1.2;
+  transition: color 0.3s ease;
 }
 
 /* ——— Message log ——— */
@@ -223,6 +254,11 @@ button.iconbtn.plus:hover:not(:disabled) {
   border-radius: 10px 10px 0 0;
   margin-left: 12px;
 }
+
+/* Act 3 accents */
+.app.act3 .top h1 { color: var(--pink); }
+.app.act3 .msg.monika p { border-color: var(--pink); }
+.app.act3 .name { background: var(--pink); }
 
 /* Typing indicator */
 .msg.waiting { align-items: stretch; }
@@ -926,7 +962,7 @@ button.lb-next { right: 10px; }
 }
 
 /* Confirm popup */
-.modal.confirm { max-width: 360px; animation: lb-pop 0.18s ease; }
-.confirm-msg { margin: 0; color: var(--ink); line-height: 1.5; overflow-wrap: anywhere; }
+.modal.confirm { max-width: 360px; max-height: 85vh; overflow-y: auto; animation: lb-pop 0.18s ease; }
+.confirm-msg { margin: 0; color: var(--ink); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
 button.dangerfill { background: #c0392b; color: #fff; }
 @media (prefers-reduced-motion: reduce) { .modal.confirm { animation: none; } }
