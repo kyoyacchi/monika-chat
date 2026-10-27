@@ -844,6 +844,7 @@ button.menuitem:hover:not(:disabled) { background: color-mix(in srgb, var(--gree
   inset: 0;
   z-index: 50;
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   padding: calc(56px + env(safe-area-inset-top)) 12px calc(56px + env(safe-area-inset-bottom));
   background: rgba(18, 8, 14, 0.86);
@@ -851,11 +852,20 @@ button.menuitem:hover:not(:disabled) { background: color-mix(in srgb, var(--gree
   animation: lb-in 0.18s ease;
 }
 
+@supports (height: 100dvh) {
+  .lightbox img { max-width: calc(100dvw - 24px); max-height: calc(100dvh - 120px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+}
+
 @keyframes lb-in { from { opacity: 0; } to { opacity: 1; } }
 
 .lightbox img {
-  max-width: 100%;
-  max-height: 100%;
+  display: block;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 120px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   object-fit: contain;
   border-radius: 14px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
