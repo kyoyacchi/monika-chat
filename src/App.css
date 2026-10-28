@@ -257,6 +257,28 @@ button.iconbtn.plus:hover:not(:disabled) {
 
 /* Act 3 accents */
 .app.act3 .top h1 { color: var(--pink); }
+
+/* "Monika" -> "Just Monika" when Act 3 is on */
+.top h1 .just {
+  display: inline-block;
+  vertical-align: bottom;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: pre;
+  transform: translateX(-6px);
+  transition: max-width 0.7s ease, opacity 0.6s ease 0.1s, transform 0.6s ease 0.1s;
+}
+
+.app.act3 .top h1 .just {
+  max-width: 3em;
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .top h1 .just { transition: none; }
+}
 .app.act3 .msg.monika p { border-color: var(--pink); }
 .app.act3 .name { background: var(--pink); }
 

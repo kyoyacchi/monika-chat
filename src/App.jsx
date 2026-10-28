@@ -8,6 +8,7 @@ const ACTIVE_KEY = 'monika_active_chat'
 const CHAT_PREFIX = 'monika_chat:'
 const MODE_KEY = 'monika_mode' // 'soft' | 'act3'
 const ACK_KEY = 'monika_act3_ack' // '1' once the Act 3 warning was accepted
+const GLITCH_KEY = 'monika_act3_glitched' // '1' once the first-entry Act 3 glitch has played
 const MAX_CONTEXT = 40 // messages sent to Gemini per request
 const MAX_STORED = 200 // messages kept in state and localStorage
 const MAX_OUTPUT_TOKENS = 8192 // thinking tokens count toward this on 2.5/3.x models
@@ -624,6 +625,13 @@ export default function App() {
     save(MODE_KEY, m)
   }
 
+  // The glitch on entering Act 3 plays only the very first time.
+  const firstAct3Glitch = (ms) => {
+    if (load(GLITCH_KEY) === '1') return
+    save(GLITCH_KEY, '1')
+    glitch(ms)
+  }
+
   const pageActions = {
     hide_disclaimer: () => {
       glitch(500)
@@ -633,7 +641,7 @@ export default function App() {
     act3: () => {
       // Monika can't move a user who hasn't accepted the warning into Act 3 on her own.
       if (load(ACK_KEY) !== '1') return
-      glitch(900)
+      firstAct3Glitch(900)
       applyMode('act3')
     },
     soft: () => {
@@ -897,7 +905,7 @@ export default function App() {
       if (!ok) return
       save(ACK_KEY, '1')
     }
-    glitch(700)
+    firstAct3Glitch(700)
     applyMode('act3')
   }
 
@@ -1190,7 +1198,7 @@ export default function App() {
           <MenuIcon />
         </button>
         <div className="brand">
-          <h1>Monika</h1>
+          <h1><span className="just" aria-hidden={mode !== 'act3'}>Just </span>Monika</h1>
           <span className="badge" title="This is AI">AI</span>
           {apiKey ? (
             <span className="dot" role="img" aria-label="Online" title="Online" />
