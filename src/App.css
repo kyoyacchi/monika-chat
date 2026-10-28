@@ -966,3 +966,88 @@ button.lb-next { right: 10px; }
 .confirm-msg { margin: 0; color: var(--ink); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
 button.dangerfill { background: #c0392b; color: #fff; }
 @media (prefers-reduced-motion: reduce) { .modal.confirm { animation: none; } }
+
+/* Act 3 warning popup */
+.modal.warn {
+  max-width: 340px;
+  gap: 12px;
+  padding: 22px 20px 18px;
+  background: #1c1218;
+  color: #f7e9f0;
+  border: 1.5px solid color-mix(in srgb, var(--pink) 60%, transparent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 32px -8px color-mix(in srgb, var(--pink) 55%, transparent);
+  overflow: hidden;
+  position: relative;
+}
+
+.modal.warn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 3px);
+}
+
+.modal.warn h2 {
+  color: var(--pink);
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: 1.5px 0 rgba(111, 209, 160, 0.55), -1.5px 0 rgba(242, 138, 178, 0.55);
+}
+
+.modal.warn .confirm-msg {
+  color: #f7e9f0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.warn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.warn-list li {
+  position: relative;
+  padding: 8px 12px 8px 30px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  border-radius: 10px;
+  background: rgba(242, 138, 178, 0.1);
+  border: 1px solid rgba(242, 138, 178, 0.25);
+}
+
+.warn-list li::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--pink);
+  box-shadow: 0 0 8px var(--pink);
+}
+
+.modal.warn .row { gap: 10px; margin-top: 4px; }
+.modal.warn .row button { flex: 1; min-height: 46px; }
+
+.modal.warn button.ghost {
+  color: #f7e9f0;
+  border-color: rgba(247, 233, 240, 0.35);
+}
+
+.modal.warn button.ghost:hover:not(:disabled) {
+  background: rgba(247, 233, 240, 0.08);
+  border-color: rgba(247, 233, 240, 0.6);
+}
+
+.modal.warn button.dangerfill {
+  background: var(--pink);
+  color: #1c1218;
+  box-shadow: 0 6px 18px -6px var(--pink);
+}
