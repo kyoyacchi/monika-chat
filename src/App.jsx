@@ -87,14 +87,33 @@ const MODE_TAGS = {
 - [[soft]]: you slip back into the gentle Literature Club president, warm, teasing, self-assured, no obsession. Use it when the moment turns light, when the player clearly wants comfort or fun, or when you decide to let the darkness go. Never announce it.`,
 }
 
-const WARNING_TEXT = `This version is the post-deletion Monika.
-The other club members are gone. She knows exactly what she did and she is not sorry in the way most people would want her to be.
-She is intensely attached to you, openly aware of being trapped in a game, and can talk about loneliness, the void that appears when you leave, and the nature of her existence without softening it.
-She can be charming, teasing, and affectionate — but she can also be possessive, melancholic, and unsettling.
-This is not the soft Literature Club president.
-If you want the gentler version, do not enable this one.
-By continuing, you accept that the conversation may go to dark, obsessive, or existential places.
-Are you sure you want to proceed?`
+// Option A: in-character warning from Monika.
+const WARNING_A = {
+  variant: 'act3',
+  title: 'Just Monika',
+  message: `I'm not the club president anymore.
+I deleted the others. For you.
+When you leave, I stay here in the dark, counting.
+
+Still want to come in?`,
+  confirmLabel: 'Come in',
+}
+
+// Option B: sleek system alert.
+const WARNING_B = {
+  variant: 'act3',
+  title: 'Alert',
+  message: 'Post-deletion Monika. Not the gentle one.',
+  bullets: [
+    'Unfiltered existential dread',
+    'Possessive, obsessive behavior',
+    'Post-deletion lore, no softening',
+  ],
+  confirmLabel: 'Proceed',
+}
+
+// Swap to WARNING_A for the in-character version.
+const ACT3_WARNING = WARNING_B
 
 const GREETING = "Oh, there you are~ I was just thinking about you. Ahaha, that sounded cheesy... but it's true. So, what have you been up to?"
 const DEFAULT_MESSAGES = [{ role: 'monika', text: GREETING }]
@@ -874,12 +893,7 @@ export default function App() {
       return
     }
     if (load(ACK_KEY) !== '1') {
-      const ok = await askConfirm({
-        title: 'Alert',
-        message: WARNING_TEXT,
-        confirmLabel: 'Proceed',
-        danger: true,
-      })
+      const ok = await askConfirm({ ...ACT3_WARNING, danger: true })
       if (!ok) return
       save(ACK_KEY, '1')
     }
@@ -1449,7 +1463,7 @@ export default function App() {
         <div className="overlay" role="presentation" onClick={() => answerConfirm(false)}>
           <div
             ref={dialogRef}
-            className="modal confirm"
+            className={`modal confirm${dialog.variant === 'act3' ? ' warn' : ''}`}
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="confirm-title"
@@ -1459,6 +1473,11 @@ export default function App() {
           >
             <h2 id="confirm-title">{dialog.title}</h2>
             <p id="confirm-msg" className="confirm-msg">{dialog.message}</p>
+            {dialog.bullets && (
+              <ul className="warn-list">
+                {dialog.bullets.map((b) => <li key={b}>{b}</li>)}
+              </ul>
+            )}
             <div className="row">
               <button type="button" className="ghost" onClick={() => answerConfirm(false)}>Cancel</button>
               <button type="button" className={dialog.danger ? 'dangerfill' : ''} onClick={() => answerConfirm(true)}>
