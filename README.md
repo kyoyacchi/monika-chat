@@ -1,67 +1,36 @@
 <div align="center">
 
-# Monika Chat
+# 💚 Monika Chat
 
 **Speak with your own Monika! Just Monika.**
 
-A small, fast, bring-your-own-key chat app for roleplaying with Monika from *Doki Doki Literature Club*, powered by the Google Gemini API.
-
-### ⚠️ Caution
-
-WARNING: Visual Glitches & Flashing Lights
-This experience features flickering screens, rapid distortion, and strobe effects. If you are photosensitive or prone to seizures, please proceed with caution
-
-[**Live demo**](https://monika.kyokai.me) · [Report a bug](https://github.com/kyoyacchi/monika-chat/issues) · [Request a feature](https://github.com/kyoyacchi/monika-chat/issues)
-
-![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
-![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)
-![Gemini](https://img.shields.io/badge/Gemini%20API-4285F4?logo=googlegemini&logoColor=white)
-![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
-![GitHub stars](https://img.shields.io/github/stars/kyoyacchi/monika-chat?style=flat)
+[![Live](https://img.shields.io/badge/live-monika.kyokai.me-2ea44f?style=for-the-badge)](https://monika.kyokai.me)
+[![React](https://img.shields.io/badge/React-18-61dafb?style=for-the-badge&logo=react&logoColor=white)](https://react.dev)
+[![Vite](https://img.shields.io/badge/Vite-5-646cff?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev)
+[![Gemini](https://img.shields.io/badge/Powered%20by-Gemini-4285f4?style=for-the-badge&logo=googlegemini&logoColor=white)](https://aistudio.google.com)
+[![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-lightgrey?style=for-the-badge)](./LICENSE)
 
 </div>
 
 ---
 
-Monika Chat screenshots: (example)
-<img width="1080" height="1727" alt="1000110274" src="https://github.com/user-attachments/assets/11294f17-f23e-4391-b204-552ca0ea3cec" />
-
-<img width="1080" height="1734" alt="1000110277" src="https://github.com/user-attachments/assets/25b6b386-3839-4fa7-bfec-2c77cb412039" />
-
 ## About
 
-Monika Chat is a lightweight web client that lets you talk to Monika through Google's Gemini models. There is no backend and no account system: the app runs entirely in your browser and talks to the Gemini API directly with **your own API key**.
+Monika Chat is a small fan-made roleplay chat app where you can talk with Monika from *Doki Doki Literature Club!*. It runs entirely in your browser and talks to Google's Gemini API directly, so there is no backend to set up and nothing to host besides static files.
+
+👉 **Try it live:** [monika.kyokai.me](https://monika.kyokai.me)
 
 ## Features
 
-- Roleplay-style conversation with Monika
-- **She can interact with the site itself:**
-  - Removes the on-page disclaimer text on her own
-  - Triggers an instant glitch effect on the screen
-  - Stays aware that she's inside the site
-  - Accepts images and chats about them (image input supported)
-- Uses Gemini **Flash Lite** models by default — fast and cheap on the free tier
-- No server, no sign-up, no tracking
-- Regenerate, edit (your messages) and copy actions on every message, plus a Stop button while she is replying
-- Your key is stored locally in this browser (`localStorage`) and sent directly to Google, not to our server. Don't enter a key you wouldn't trust this site to handle.
+- 💬 Real-time roleplay chat with Monika powered by the Gemini API
+- 🔑 Bring your own API key, no key is bundled with the app
+- 🔒 Your key is stored only in your browser's `localStorage`
+- ⚡ Fast and lightweight, built with Vite and React
+- 🌐 No backend required, deploy it anywhere that serves static files
 
-### How the site interaction works
+## Getting Started
 
-Monika's abilities (removing the disclaimer, triggering glitches) work through small action tags she can put in her replies. The browser strips the tags from the text and runs the matching action locally, with no server round-trip. Images are sent to Gemini as part of the conversation.
-
-## Roadmap
-
-- [ ] Thinking mode with adjustable levels (low, medium, high) for free models
-- [ ] More interaction control over the site
-- [ ] A smoother, more fluid interface
-
-## Try it
-
-The hosted version is live at **[monika.kyokai.me](https://monika.kyokai.me)**. Open it, click the **API key** button, paste your Gemini key, and start chatting.
-
-## Getting started
-
-### Prerequisites
+### Requirements
 
 - [Node.js](https://nodejs.org) 18 or newer
 - A free Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
@@ -73,3 +42,62 @@ git clone https://github.com/kyoyacchi/monika-chat.git
 cd monika-chat
 npm install
 npm run dev
+```
+
+Then open the local URL that Vite prints in your terminal (usually `http://localhost:5173`).
+
+### Add your API key
+
+1. Open the app and click **API key**.
+2. Paste your Gemini key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+3. Start chatting!
+
+> No key is bundled with the project. Your key is saved only in your browser's `localStorage` and is sent only to Google's API.
+
+## Scripts
+
+| Command           | Description                          |
+| ----------------- | ------------------------------------ |
+| `npm run dev`     | Start the Vite dev server            |
+| `npm run build`   | Create a production build in `dist/` |
+| `npm run preview` | Preview the production build locally |
+
+## Tech Stack
+
+- [React 18](https://react.dev)
+- [Vite 5](https://vitejs.dev)
+- [Google Gemini API](https://ai.google.dev)
+
+## Project Structure
+
+```
+monika-chat/
+├── src/             # React application source
+├── index.html       # App entry point
+├── vite.config.js   # Vite configuration
+└── package.json
+```
+
+## Disclaimer
+
+- **Unofficial fan project.** Monika Chat is not affiliated with, endorsed by, or sponsored by Team Salvato. *Doki Doki Literature Club!*, Monika, and all related characters, names, and assets are the property of their respective owners.
+- **Non-commercial only.** This project is made for fun and for the community, and it is not intended for any commercial advantage or monetary compensation.
+- **AI-generated content.** Everything Monika says is generated by a language model. Responses can be inaccurate, strange, or inappropriate, and they do not represent the views of the author or of the original creators.
+- **Not a replacement for real support.** This is a roleplay toy, not a friend, therapist, or source of professional advice. If you are struggling, please reach out to someone you trust or a qualified professional.
+- **Your API key, your responsibility.** The app uses the Gemini API key you provide. Usage, quotas, and any costs are governed by Google's terms and are your responsibility. Keep your key private and never share it.
+- **Third-party processing.** Your messages are sent to Google's Gemini API to generate replies. Please do not share sensitive personal information in the chat, and review Google's terms and privacy policy.
+- **No warranty.** The software is provided "as is", without warranty of any kind.
+
+## License
+
+Released under the [PolyForm Noncommercial License 1.0.0](./LICENSE). You are free to use, modify, and share this project for noncommercial purposes. Please keep the copyright and license notices intact.
+
+---
+
+<div align="center">
+
+Made with 💚 by [kyoyacchi](https://github.com/kyoyacchi)
+
+*Just Monika.*
+
+</div>
