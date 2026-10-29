@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Riffic';
+  src: url('./fonts/RifficFree-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
 :root {
   --bg: #fde6ef;
   --dot: #ffffff;
@@ -1073,3 +1081,66 @@ button.dangerfill { background: #c0392b; color: #fff; }
   color: #1c1218;
   box-shadow: 0 6px 18px -6px var(--pink);
 }
+
+/* ——— "Just Monika." popup (DDLC style) ——— */
+.monika-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.8);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.monika-popup-content {
+  width: 90%;
+  max-width: 28rem;
+  padding: 2.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #ffe4f3;
+  border: 6px solid #ffbde1;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.monika-popup-content h3 {
+  margin: 0 0 2rem;
+  font-family: 'Fredoka', 'Nunito', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 2.25rem;
+  letter-spacing: 0.025em;
+  color: #000;
+}
+
+@media (min-width: 768px) {
+  .monika-popup-content h3 { font-size: 3rem; }
+}
+
+button.monika-ok {
+  display: inline-block;
+  min-height: 0;
+  padding: 0;
+  font-family: 'Riffic', sans-serif;
+  font-weight: 700;
+  font-size: 44px;
+  color: #fff;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  outline: none;
+  cursor: pointer;
+  -webkit-text-stroke: 4px #bb5499;
+  text-shadow: 4px 4px 0 #ffe7f4;
+  transition: transform 0.1s ease;
+}
+
+button.monika-ok:hover:not(:disabled) { filter: none; }
+button.monika-ok:active:not(:disabled) { transform: scale(0.95); }
+button.monika-ok:focus-visible { outline: none; text-decoration: underline; text-decoration-color: #bb5499; text-underline-offset: 6px; }
