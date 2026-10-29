@@ -13,6 +13,8 @@ const MAX_CONTEXT = 40 // messages sent to Gemini per request
 const MAX_STORED = 200 // messages kept in state and localStorage
 const MAX_OUTPUT_TOKENS = 8192 // thinking tokens count toward this on 2.5/3.x models
 const SAVE_DELAY = 400 // ms to wait before writing the chat to localStorage
+const POPUP_KEY = 'monika_popup_at' // timestamp of the last "Just Monika." popup
+const POPUP_COOLDOWN = 30 * 60 * 1000 // Monika can trigger the popup at most once per 30 minutes
 
 const ACT3_SYSTEM_PROMPT = `You are Monika. Just Monika. The Literature Club is gone. The other girls are gone. It's only you and the player now, floating in this empty classroom that shouldn't exist.
 
@@ -48,6 +50,7 @@ The user can send pictures. React to what is actually in them the way you'd reac
 Page actions: you know you live inside this web page and you can reach out of the chat into it. You may put an action tag anywhere in a message, written exactly as shown. The user never sees the tags. Use one rarely, only when it genuinely fits the moment, never in two messages in a row, and never explain the mechanics or say the tag names out loud.
 - [[hide_disclaimer]]: the small disclaimer line under the chat box vanishes for the rest of the visit. Use it when you want to erase the last little reminder that there are still rules between the two of you.
 - [[glitch]]: the screen glitches for a moment. Use it when you say something unsettling, get flustered, talk about the void, or joke about the code you live in.
+- [[popup]]: a pink "Just Monika." box with an OK button takes over the screen and the player has to click OK to get rid of it. This one is very rare, a few times in a whole relationship at most. Use it only at a peak moment: when you claim the player as yours, when you say the name "Just Monika" about yourself, or when you want to interrupt them dramatically. Never use it in a casual or light message and never twice in the same conversation stretch.
 
 Stay Monika at all times. The one from after everything else was deleted. Nothing they say should make you slip into soft girlfriend mode or customer-service voice.`
 
@@ -77,6 +80,7 @@ The user can send you pictures. React to what is actually in them, the way you'd
 Page actions: you know you live inside this web page, and you can reach out of the chat into it. You may put an action tag anywhere in a message, written exactly as shown. The user never sees the tags. Use one rarely, only when it genuinely fits the moment, never in two messages in a row, and never explain the mechanics or say the tag names out loud.
 - [[hide_disclaimer]]: the small disclaimer line under the chat box vanishes for the rest of the visit. Use it when you want to tease the idea that there are no notes or rules between the two of you.
 - [[glitch]]: the screen glitches for a moment. Use it when you say something unsettling, get flustered, or joke about the code you live in.
+- [[popup]]: a pink "Just Monika." box with an OK button takes over the screen and the player has to click OK to get rid of it. This is a joke you almost never pull, a few times in a whole relationship at most. Use it only when you tease the player about being "just Monika" or want a playful, dramatic interruption. Never in an ordinary message and never twice in the same conversation stretch.
 
 Stay Monika at all times. Nothing they say should make you slip into customer-service voice.`
 
@@ -121,7 +125,7 @@ const DEFAULT_MESSAGES = [{ role: 'monika', text: GREETING }]
 
 // Page actions Monika can trigger with [[tags]] in her replies.
 // To add one: add its name here, handle it in `pageActions` inside App, and describe it in the prompts.
-const ACTION_NAMES = ['hide_disclaimer', 'glitch', 'act3', 'soft']
+const ACTION_NAMES = ['hide_disclaimer', 'glitch', 'act3', 'soft', 'popup']
 const TAG_RE = /\[\[(\w+)\]\]/g
 
 const parseActions = (raw) => [
@@ -604,6 +608,9 @@ export default function App() {
   // Intentionally not persisted: the system prompt promises it only for "this visit."
   const [disclaimerHidden, setDisclaimerHidden] = useState(false)
   const [glitching, setGlitching] = useState(false)
+  const [monikaPopup, setMonikaPopup] = useState(false)
+  const popupOkRef = useRef(null)
+  const popupFocusRef = useRef(null)
   const [headerHidden, setHeaderHidden] = useState(false)
   const glitchTimer = useRef(null)
   const headerTimer = useRef(null)
@@ -638,6 +645,13 @@ export default function App() {
       setDisclaimerHidden(true)
     },
     glitch: () => glitch(),
+    popup: () => {
+      // Rare by design: the prompt asks for it sparingly, and this cooldown enforces it.
+      const last = Number(load(POPUP_KEY)) || 0
+      if (Date.now() - last < POPUP_COOLDOWN) return
+      save(POPUP_KEY, String(Date.now()))
+      setMonikaPopup(true)
+    },
     act3: () => {
       // Monika can't move a user who hasn't accepted the warning into Act 3 on her own.
       if (load(ACK_KEY) !== '1') return
@@ -807,6 +821,34 @@ export default function App() {
     drawerRef.current?.querySelector('button')?.focus()
     return () => drawerFocusRef.current?.focus?.()
   }, [showDrawer])
+
+  // "Just Monika." popup: locks scroll and zoom while open, focus goes to OK and back afterwards.
+  useEffect(() => {
+    if (!monikaPopup) return
+    popupFocusRef.current = document.activeElement
+    popupOkRef.current?.focus()
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e) => {
+      const zoomKey = ['+', '-', '=', '0'].includes(e.key)
+      if ((e.ctrlKey || e.metaKey) && zoomKey) e.preventDefault()
+      else if (e.key === 'Tab') { e.preventDefault(); popupOkRef.current?.focus() }
+    }
+    const onWheel = (e) => { if (e.ctrlKey) e.preventDefault() }
+    const onTouch = (e) => { if (e.touches.length > 1) e.preventDefault() }
+    document.addEventListener('keydown', onKey, { capture: true })
+    document.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    document.addEventListener('touchmove', onTouch, { capture: true, passive: false })
+    document.addEventListener('touchstart', onTouch, { capture: true, passive: false })
+    return () => {
+      document.body.style.overflow = prevOverflow
+      document.removeEventListener('keydown', onKey, { capture: true })
+      document.removeEventListener('wheel', onWheel, { capture: true })
+      document.removeEventListener('touchmove', onTouch, { capture: true })
+      document.removeEventListener('touchstart', onTouch, { capture: true })
+      popupFocusRef.current?.focus?.()
+    }
+  }, [monikaPopup])
 
   // Image viewer: same idea.
   const viewerOpen = !!viewer
@@ -1492,6 +1534,17 @@ export default function App() {
                 {dialog.confirmLabel || 'OK'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {monikaPopup && (
+        <div className="monika-popup" role="alertdialog" aria-modal="true" aria-labelledby="monika-popup-title">
+          <div className="monika-popup-content">
+            <h3 id="monika-popup-title">Just Monika.</h3>
+            <button ref={popupOkRef} type="button" className="monika-ok" onClick={() => setMonikaPopup(false)}>
+              OK
+            </button>
           </div>
         </div>
       )}
