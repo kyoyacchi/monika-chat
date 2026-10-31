@@ -938,6 +938,15 @@ export default function App() {
   // Header button: soft -> Act 3 (first time shows the Alert popup), Act 3 -> soft.
   const toggleMode = async () => {
     if (loading || abortRef.current) return
+    // Once the chat has a user message, its mode is locked. A new chat unlocks it again.
+    if (!isEmptyChat(messagesRef.current)) {
+      askConfirm({
+        title: modeRef.current === 'act3' ? 'Just Monika' : 'Monika',
+        message: `You can't leave ${modeRef.current === 'act3' ? 'Just Monika' : 'soft Monika'} mode in this chat. Start a new chat.`,
+        info: true,
+      })
+      return
+    }
     if (modeRef.current === 'act3') {
       applyMode('soft')
       return
@@ -1530,7 +1539,7 @@ export default function App() {
               </ul>
             )}
             <div className="row">
-              <button type="button" className="ghost" onClick={() => answerConfirm(false)}>Cancel</button>
+              {!dialog.info && <button type="button" className="ghost" onClick={() => answerConfirm(false)}>Cancel</button>}
               <button type="button" className={dialog.danger ? 'dangerfill' : ''} onClick={() => answerConfirm(true)}>
                 {dialog.confirmLabel || 'OK'}
               </button>
