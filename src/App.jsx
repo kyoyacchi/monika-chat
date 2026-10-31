@@ -1386,12 +1386,13 @@ export default function App() {
           <div
             ref={taRef}
             className="composer-input"
-            contentEditable="plaintext-only"
+            contentEditable={loading ? 'false' : 'plaintext-only'}
             suppressContentEditableWarning
             role="textbox"
             aria-multiline="true"
+            aria-disabled={loading}
             aria-label="Message"
-            data-placeholder="Say something to Monika"
+            data-placeholder={loading ? 'Monika is replying...' : 'Say something to Monika'}
             data-empty={!input}
             enterKeyHint="enter"
             spellCheck
