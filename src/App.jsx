@@ -1289,12 +1289,13 @@ export default function App() {
           <div
             ref={taRef}
             className="composer-input"
-            contentEditable="plaintext-only"
+            contentEditable={loading ? 'false' : 'plaintext-only'}
             suppressContentEditableWarning
             role="textbox"
             aria-multiline="true"
+            aria-disabled={loading}
             aria-label="Message"
-            data-placeholder="Say something to Monika"
+            data-placeholder={loading ? 'Monika is replying...' : 'Say something to Monika'}
             data-empty={!input}
             enterKeyHint="enter"
             spellCheck
@@ -1432,7 +1433,7 @@ export default function App() {
               </ul>
             )}
             <div className="row">
-              <button type="button" className="ghost" onClick={() => answerConfirm(false)}>Cancel</button>
+              {!dialog.info && <button type="button" className="ghost" onClick={() => answerConfirm(false)}>Cancel</button>}
               <button type="button" className={dialog.danger ? 'dangerfill' : ''} onClick={() => answerConfirm(true)}>
                 {dialog.confirmLabel || 'OK'}
               </button>

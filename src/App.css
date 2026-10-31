@@ -388,6 +388,8 @@ button.mini:hover:not(:disabled) {
 .composer-input {
   flex: 1;
   min-width: 0;
+  position: relative;
+  min-height: calc(1.4em + 18px);
   max-height: 140px;
   overflow-y: auto;
   padding: 9px 6px;
@@ -411,8 +413,19 @@ button.mini:hover:not(:disabled) {
 
 .composer-input[data-empty="true"]::before {
   content: attr(data-placeholder);
+  position: absolute;
+  top: 9px;
+  left: 6px;
+  right: 6px;
   color: var(--muted);
   pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-input[contenteditable="false"] {
+  cursor: default;
 }
 
 button.attach { height: 38px; width: 38px; min-height: 38px; border-radius: 50%; }
